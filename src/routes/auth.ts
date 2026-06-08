@@ -119,7 +119,7 @@ router.post('/login', async (req: Request, res: Response) => {
   const { email, password } = parsed.data;
 
   const [user] = await sql`
-    SELECT id, name, email, role, password_hash, specialty, degrees, phone, clinic_id
+    SELECT id, name, email, role, password_hash, specialty, degrees, phone, clinic_id, approval_status
     FROM users WHERE email = ${email}
   `;
   if (!user) {
@@ -152,7 +152,7 @@ router.post('/login', async (req: Request, res: Response) => {
   res.json({
     accessToken,
     refreshToken,
-    user: { id: user.id, name: user.name, email: user.email, role: user.role, clinicId: user.clinic_id, specialty: user.specialty, degrees: user.degrees },
+    user: { id: user.id, name: user.name, email: user.email, role: user.role, clinicId: user.clinic_id, specialty: user.specialty, degrees: user.degrees, approvalStatus: user.approval_status },
   });
 });
 
