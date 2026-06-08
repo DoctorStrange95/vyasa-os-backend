@@ -1,0 +1,227 @@
+import 'dotenv/config';
+import express from 'express';
+import http from 'http';
+import cors from 'cors';
+import helmet from 'helmet';
+import morgan from 'morgan';
+import { Server as SocketIO } from 'socket.io';
+import jwt from 'jsonwebtoken';
+import { OAuth2Client } from 'google-auth-library';
+import bcrypt from 'bcryptjs';
+import { v4 as uuidv4 } from 'uuid';
+
+import sql, { runMigrations } from './db';
+import authRouter from './routes/auth';
+import patientsRouter from './routes/patients';
+import visitsRouter from './routes/visits';
+import vitalsRouter from './routes/vitals';
+import appointmentsRouter from './routes/appointments';
+import clinicsRouter from './routes/clinics';
+import chatRouter from './routes/chat';
+import adminRouter from './routes/admin';
+import { AuthPayload } from './middleware/auth';
+
+const app = express();
+const server = http.createServer(app);
+
+// ─── CORS ─────────────────────────────────────────────────────────────────────
+
+const ALLOWED_ORIGINS = [
+  process.env.CLIENT_ORIGIN ?? 'https://vyasa-health-os.pages.dev',
+  'http://localhost:5173',
+  'http://localhost:3000',
+];
+
+app.use(cors({
+  origin: (origin, cb) => {
+    if (!origin || ALLOWED_ORIGINS.some(o => origin.startsWith(o))) {
+      cb(null, true);
+    } else {
+      cb(new Error(`CORS blocked: ${origin}`));
+    }
+  },
+  credentials: true,
+}));
+
+// ─── Middleware ───────────────────────────────────────────────────────────────
+
+app.use(helmet({ contentSecurityPolicy: false }));
+app.use(morgan(process.env.NODE_ENV === 'production' ? 'combined' : 'dev'));
+app.use(express.json({ limit: '10mb' }));
+
+// ─── Socket.io ────────────────────────────────────────────────────────────────
+
+const io = new SocketIO(server, {
+  cors: { origin: ALLOWED_ORIGINS, methods: ['GET', 'POST'], credentials: true },
+});
+
+io.use((socket, next) => {
+  const token = socket.handshake.auth.token as string;
+  if (!token) { next(new Error('Missing token')); return; }
+  try {
+    const payload = jwt.verify(token, process.env.JWT_SECRET!) as AuthPayload;
+    (socket as unknown as { user: AuthPayload }).user = payload;
+    next();
+  } catch {
+    next(new Error('Invalid token'));
+  }
+});
+
+io.on('connection', socket => {
+  const user = (socket as unknown as { user: AuthPayload }).user;
+  const clinicId = user.clinicId;
+
+  // Join clinic room
+  socket.join(`clinic:${clinicId}`);
+
+  // Join patient room on request
+  socket.on('join_patient', (patientId: string) => {
+    socket.join(`patient:${patientId}`);
+  });
+
+  socket.on('leave_patient', (patientId: string) => {
+    socket.leave(`patient:${patientId}`);
+  });
+
+  // Chat message
+  socket.on('chat_message', async (data: { patientId: string; message: string; type?: string }) => {
+    const id = `msg_${Date.now()}_${Math.random().toString(36).slice(2)}`;
+    const time = new Date().toISOString();
+    const msg = {
+      id, patientId: data.patientId, clinicId,
+      senderId: user.userId, senderName: user.name, senderRole: user.role,
+      message: data.message, type: data.type ?? 'message', time,
+    };
+    // Persist to DB
+    await sql`
+      INSERT INTO chat_messages (id, patient_id, clinic_id, sender_id, sender_name, sender_role, message, type, time)
+      VALUES (${id}, ${data.patientId}, ${clinicId}, ${user.userId}, ${user.name}, ${user.role},
+              ${data.message}, ${data.type ?? 'message'}, ${time})
+    `;
+    // Broadcast to everyone in the patient room
+    io.to(`patient:${data.patientId}`).emit('chat_message', msg);
+  });
+
+  socket.on('vitals_update', (data: unknown) => {
+    socket.to(`clinic:${clinicId}`).emit('vitals_update', data);
+  });
+
+  socket.on('patient_status_change', (data: unknown) => {
+    socket.to(`clinic:${clinicId}`).emit('patient_status_change', data);
+  });
+
+  socket.on('disconnect', () => {
+    // cleanup handled by socket.io
+  });
+});
+
+// ─── Google OAuth ─────────────────────────────────────────────────────────────
+
+const googleClient = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
+
+app.post('/auth/google', async (req, res) => {
+  const { idToken, profileData } = req.body;
+
+  if (!idToken) {
+    res.status(400).json({ error: 'Missing Google ID token' });
+    return;
+  }
+
+  let googleEmail: string, googleName: string;
+
+  try {
+    const ticket = await googleClient.verifyIdToken({
+      idToken,
+      audience: process.env.GOOGLE_CLIENT_ID,
+    });
+    const payload = ticket.getPayload()!;
+    googleEmail = payload.email!;
+    googleName = payload.name ?? profileData?.name ?? 'Doctor';
+  } catch {
+    // In dev/test mode without proper Google client ID, fall back to profile data
+    if (process.env.NODE_ENV !== 'production' && profileData?.email) {
+      googleEmail = profileData.email as string;
+      googleName = profileData.name as string ?? 'Doctor';
+    } else {
+      res.status(401).json({ error: 'Invalid Google token' });
+      return;
+    }
+  }
+
+  // Check if user exists
+  const [existing] = await sql`SELECT * FROM users WHERE email = ${googleEmail}`;
+
+  if (existing) {
+    // User exists — return tokens
+    const p: AuthPayload = {
+      userId: existing.id as number,
+      email: existing.email as string,
+      role: existing.role as string,
+      clinicId: (existing.clinic_id as string) ?? '',
+      name: existing.name as string,
+    };
+    const accessToken = jwt.sign(p, process.env.JWT_SECRET!, { expiresIn: '15m' });
+    const refreshToken = uuidv4();
+    const expiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
+    await sql`INSERT INTO refresh_tokens (user_id, token, expires_at) VALUES (${existing.id}, ${refreshToken}, ${expiresAt})`;
+
+    res.json({
+      accessToken, refreshToken,
+      user: { id: existing.id, name: existing.name, email: existing.email, role: existing.role, clinicId: existing.clinic_id, approvalStatus: existing.approval_status },
+      isNewUser: false,
+    });
+  } else {
+    // New user — return partial data so frontend shows registration form
+    res.json({
+      isNewUser: true,
+      googleEmail,
+      googleName,
+    });
+  }
+});
+
+// ─── Routes ───────────────────────────────────────────────────────────────────
+
+app.use('/auth', authRouter);
+app.use('/patients', patientsRouter);
+app.use('/visits', visitsRouter);
+app.use('/vitals', vitalsRouter);
+app.use('/appointments', appointmentsRouter);
+app.use('/clinics', clinicsRouter);
+app.use('/chat', chatRouter);
+app.use('/admin', adminRouter);
+
+app.get('/health', (_req, res) => {
+  res.json({ status: 'ok', time: new Date().toISOString() });
+});
+
+// ─── Boot ─────────────────────────────────────────────────────────────────────
+
+const PORT = Number(process.env.PORT ?? 3001);
+
+async function start() {
+  await runMigrations();
+
+  // Ensure superadmin exists
+  const [sa] = await sql`SELECT id FROM users WHERE role = 'superadmin' LIMIT 1`;
+  if (!sa) {
+    const saEmail = process.env.SUPERADMIN_EMAIL ?? 'admin@vyasa.health';
+    const saPass = process.env.SUPERADMIN_PASSWORD ?? 'VyasaAdmin2024!';
+    const hash = await bcrypt.hash(saPass, 12);
+    await sql`
+      INSERT INTO users (name, email, password_hash, role, approval_status)
+      VALUES ('Vyasa Admin', ${saEmail}, ${hash}, 'superadmin', 'approved')
+      ON CONFLICT DO NOTHING
+    `;
+    console.log(`🔑 Superadmin created: ${saEmail}`);
+  }
+
+  server.listen(PORT, () => {
+    console.log(`🚀 Vyasa backend running on port ${PORT}`);
+  });
+}
+
+start().catch(err => {
+  console.error('Failed to start:', err);
+  process.exit(1);
+});
