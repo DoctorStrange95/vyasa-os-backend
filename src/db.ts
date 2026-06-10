@@ -194,6 +194,25 @@ export async function runMigrations() {
   await sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS state TEXT`;
   await sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS city TEXT`;
 
+  // Login session audit log
+  await sql`
+    CREATE TABLE IF NOT EXISTS login_sessions (
+      id SERIAL PRIMARY KEY,
+      user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+      user_name TEXT,
+      user_email TEXT,
+      user_role TEXT,
+      logged_in_at TIMESTAMPTZ DEFAULT NOW(),
+      ip_address TEXT,
+      user_agent TEXT,
+      lat DOUBLE PRECISION,
+      lng DOUBLE PRECISION,
+      location_label TEXT
+    )
+  `;
+  await sql`CREATE INDEX IF NOT EXISTS idx_login_sessions_user ON login_sessions(user_id)`;
+  await sql`CREATE INDEX IF NOT EXISTS idx_login_sessions_time ON login_sessions(logged_in_at DESC)`;
+
   console.log('✅ DB migrations complete');
 }
 

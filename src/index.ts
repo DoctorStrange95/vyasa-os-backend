@@ -120,7 +120,10 @@ io.on('connection', socket => {
 const googleClient = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
 
 app.post('/auth/google', async (req, res) => {
-  const { idToken, accessToken: googleAccessToken } = req.body as { idToken?: string; accessToken?: string };
+  const { idToken, accessToken: googleAccessToken, lat, lng, locationLabel } = req.body as {
+    idToken?: string; accessToken?: string;
+    lat?: number; lng?: number; locationLabel?: string;
+  };
 
   let googleEmail = '', googleName = 'Doctor';
 
@@ -169,6 +172,12 @@ app.post('/auth/google', async (req, res) => {
     const refreshToken = uuidv4();
     const expiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
     await sql`INSERT INTO refresh_tokens (user_id, token, expires_at) VALUES (${existing.id}, ${refreshToken}, ${expiresAt})`;
+
+    // Log this login session
+    const ip = (req.headers['x-forwarded-for'] as string | undefined)?.split(',')[0]?.trim() ?? req.socket.remoteAddress ?? null;
+    sql`INSERT INTO login_sessions (user_id, user_name, user_email, user_role, ip_address, user_agent, lat, lng, location_label)
+        VALUES (${existing.id}, ${existing.name as string}, ${existing.email as string}, ${existing.role as string},
+                ${ip}, ${req.headers['user-agent'] ?? null}, ${lat ?? null}, ${lng ?? null}, ${locationLabel ?? null})`.catch(() => {});
 
     res.json({
       accessToken, refreshToken,
