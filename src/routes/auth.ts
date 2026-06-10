@@ -203,7 +203,7 @@ router.post('/logout', async (req: Request, res: Response) => {
 
 router.get('/me', requireAuth, async (req: Request, res: Response) => {
   const [user] = await sql`
-    SELECT u.id, u.name, u.email, u.role, u.specialty, u.degrees, u.phone, u.reg_number, u.clinic_id,
+    SELECT u.id, u.name, u.email, u.role, u.specialty, u.degrees, u.phone, u.reg_number, u.clinic_id, u.approval_status AS "approvalStatus",
            ps.doctor_name, ps.degrees AS pad_degrees, ps.specialty AS pad_specialty, ps.reg_number AS pad_reg,
            ps.address, ps.phone AS pad_phone, ps.timings, ps.clinic_name, ps.footer_note,
            ps.quote, ps.show_quote, ps.show_timings, ps.theme, ps.custom_fields
