@@ -218,6 +218,42 @@ export async function runMigrations() {
   // Store invited clinic display name(s) for reference
   await sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS invited_clinic_name TEXT`;
 
+  // Backfill: create a clinic record for any clinic_admin who has a clinic_id but no row in clinics
+  const orphanDoctors = await sql`
+    SELECT u.id, u.name, u.clinic_id
+    FROM users u
+    LEFT JOIN clinics c ON c.id = u.clinic_id
+    WHERE u.role = 'clinic_admin'
+      AND u.clinic_id IS NOT NULL
+      AND c.id IS NULL
+  `;
+  for (const doc of orphanDoctors) {
+    await sql`
+      INSERT INTO clinics (id, owner_id, name, address, fee, max_patients)
+      VALUES (${doc.clinic_id}, ${doc.id}, ${doc.name + "'s Clinic"}, '', 200, 30)
+      ON CONFLICT DO NOTHING
+    `;
+  }
+
+  // Backfill: assign a clinic_id to clinic_admin users who have none at all
+  const noClinics = await sql`
+    SELECT id, name FROM users WHERE role = 'clinic_admin' AND clinic_id IS NULL
+  `;
+  for (const doc of noClinics) {
+    const clinicId = `clinic_${doc.id}`;
+    await sql`
+      INSERT INTO clinics (id, owner_id, name, address, fee, max_patients)
+      VALUES (${clinicId}, ${doc.id}, ${(doc.name as string) + "'s Clinic"}, '', 200, 30)
+      ON CONFLICT DO NOTHING
+    `;
+    await sql`UPDATE users SET clinic_id = ${clinicId} WHERE id = ${doc.id}`;
+    await sql`
+      INSERT INTO pad_settings (user_id, doctor_name, clinic_name)
+      VALUES (${doc.id}, ${doc.name}, ${(doc.name as string) + "'s Clinic"})
+      ON CONFLICT (user_id) DO NOTHING
+    `;
+  }
+
   console.log('✅ DB migrations complete');
 }
 

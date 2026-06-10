@@ -13,15 +13,29 @@ router.get('/pending', async (req: Request, res: Response) => {
   const clinics = await sql`SELECT id FROM clinics WHERE owner_id = ${user.userId}`;
   const clinicIds = clinics.map((c: any) => c.id as string);
 
+  // Also check for a clinic_id directly on the user row (set at registration)
+  const [doctorRow] = await sql`SELECT clinic_id FROM users WHERE id = ${user.userId}`;
+  const doctorClinicId = doctorRow?.clinic_id as string | null;
+  if (doctorClinicId && !clinicIds.includes(doctorClinicId)) {
+    clinicIds.push(doctorClinicId);
+  }
+
+  // If no DB clinics found at all (clinic table empty / bootstrapped locally only),
+  // show ALL pending non-admin staff so the doctor can still approve them.
   if (clinicIds.length === 0) {
-    res.json([]);
+    const allPending = await sql`
+      SELECT id, name, email, phone, role, degrees, specialty,
+             invited_clinic_ids, invited_clinic_name, created_at
+      FROM users
+      WHERE approval_status = 'pending'
+        AND role NOT IN ('clinic_admin', 'superadmin', 'patient')
+      ORDER BY created_at DESC
+    `;
+    res.json(allPending);
     return;
   }
 
-  // Two groups:
-  // 1. Users who registered via the invite link (invited_clinic_ids is set) — match by clinic ID
-  // 2. Users who registered before the invited_clinic_ids column was added (NULL) — show all
-  //    unassigned pending staff so the doctor can approve them manually
+  // With known clinic IDs: return staff who listed those clinics OR have NULL (pre-fix registrations)
   const likePatterns = clinicIds.map(id => `%${id}%`);
   const pending = await sql`
     SELECT id, name, email, phone, role, degrees, specialty,
