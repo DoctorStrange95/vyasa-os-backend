@@ -14,6 +14,7 @@ router.get('/', async (req: Request, res: Response) => {
     id: r.id, name: r.name, address: r.address, phone: r.phone,
     fee: Number(r.fee), maxPatients: r.max_patients, timings: r.timings,
     schedule: r.schedule, color: r.color,
+    beds: r.beds ?? [],
   })));
 });
 
@@ -22,14 +23,15 @@ router.get('/', async (req: Request, res: Response) => {
 router.post('/', async (req: Request, res: Response) => {
   const d = req.body;
   const [row] = await sql`
-    INSERT INTO clinics (id, owner_id, name, address, phone, fee, max_patients, timings, schedule, color)
+    INSERT INTO clinics (id, owner_id, name, address, phone, fee, max_patients, timings, schedule, color, beds)
     VALUES (${d.id}, ${req.user!.userId}, ${d.name}, ${d.address ?? ''}, ${d.phone ?? ''},
             ${d.fee ?? 200}, ${d.maxPatients ?? 30}, ${d.timings ?? ''},
-            ${JSON.stringify(d.schedule ?? [])}, ${d.color ?? '#0d9488'})
+            ${JSON.stringify(d.schedule ?? [])}, ${d.color ?? '#0d9488'},
+            ${JSON.stringify(d.beds ?? [])})
     ON CONFLICT (id) DO UPDATE SET
       name = EXCLUDED.name, address = EXCLUDED.address, phone = EXCLUDED.phone,
       fee = EXCLUDED.fee, max_patients = EXCLUDED.max_patients, timings = EXCLUDED.timings,
-      schedule = EXCLUDED.schedule, color = EXCLUDED.color
+      schedule = EXCLUDED.schedule, color = EXCLUDED.color, beds = EXCLUDED.beds
     RETURNING *
   `;
   res.status(201).json(row);
@@ -48,7 +50,8 @@ router.patch('/:id', async (req: Request, res: Response) => {
       max_patients = COALESCE(${d.maxPatients ?? null}, max_patients),
       timings = COALESCE(${d.timings ?? null}, timings),
       schedule = COALESCE(${d.schedule ? JSON.stringify(d.schedule) : null}::jsonb, schedule),
-      color = COALESCE(${d.color ?? null}, color)
+      color = COALESCE(${d.color ?? null}, color),
+      beds = COALESCE(${d.beds != null ? JSON.stringify(d.beds) : null}::jsonb, beds)
     WHERE id = ${req.params.id} AND owner_id = ${req.user!.userId}
     RETURNING *
   `;

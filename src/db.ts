@@ -257,6 +257,9 @@ export async function runMigrations() {
   // Locality field for patients (area/neighbourhood)
   await sql`ALTER TABLE patients ADD COLUMN IF NOT EXISTS locality TEXT`;
 
+  // Beds config per clinic (JSONB array of { id, number, ward, type })
+  await sql`ALTER TABLE clinics ADD COLUMN IF NOT EXISTS beds JSONB DEFAULT '[]'`;
+
   // Audit log — every action by every user
   await sql`
     CREATE TABLE IF NOT EXISTS audit_log (

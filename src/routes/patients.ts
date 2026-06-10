@@ -7,12 +7,40 @@ import { auditFromReq } from '../lib/audit';
 const router = Router();
 router.use(requireAuth);
 
-function decryptPatient(p: Record<string, unknown>): Record<string, unknown> {
+function mapPatient(p: Record<string, unknown>): Record<string, unknown> {
   return {
-    ...p,
+    id: p.id,
+    clinicId: p.clinic_id,
     name: maybeDecrypt(p.name as string),
+    age: p.age,
+    gender: p.gender,
+    mrn: p.mrn,
     phone: maybeDecrypt(p.phone as string),
+    email: p.email,
+    bloodGroup: p.blood_group,
+    status: p.status,
+    priority: p.priority,
+    ward: p.ward,
+    bed: p.bed,
+    admitDate: p.admit_date,
+    dischargeDate: p.discharge_date,
     diagnosis: maybeDecrypt(p.diagnosis as string),
+    allergies: typeof p.allergies === 'string' ? JSON.parse(p.allergies) : (p.allergies ?? []),
+    insurance: p.insurance,
+    attendingDoctor: p.attending_doctor,
+    attendingDoctorId: p.attending_doctor_id,
+    assignedNurseId: p.assigned_nurse_id,
+    assignedNurseName: p.assigned_nurse_name,
+    deathDate: p.death_date,
+    deathCause: p.death_cause,
+    referredHospital: p.referred_hospital,
+    referredDept: p.referred_dept,
+    referredDoctor: p.referred_doctor,
+    referralReason: p.referral_reason,
+    referralUrgency: p.referral_urgency,
+    locality: p.locality,
+    createdAt: p.created_at,
+    updatedAt: p.updated_at,
   };
 }
 
@@ -24,7 +52,7 @@ router.get('/', async (req: Request, res: Response) => {
     SELECT * FROM patients WHERE clinic_id = ${clinicId}
     ORDER BY created_at DESC
   `;
-  const patients = rows.map(decryptPatient);
+  const patients = rows.map(mapPatient);
   auditFromReq(req, 'patient.read', 'patients', clinicId, { count: patients.length });
   res.json(patients);
 });
@@ -37,7 +65,7 @@ router.get('/:id', async (req: Request, res: Response) => {
   `;
   if (!p) { res.status(404).json({ error: 'Patient not found' }); return; }
   auditFromReq(req, 'patient.read', 'patient', req.params.id);
-  res.json(decryptPatient(p as Record<string, unknown>));
+  res.json(mapPatient(p as Record<string, unknown>));
 });
 
 // ─── Create / Upsert patient ──────────────────────────────────────────────────
@@ -86,7 +114,7 @@ router.post('/', async (req: Request, res: Response) => {
   `;
 
   auditFromReq(req, 'patient.create', 'patient', d.id, { mrn: d.mrn, status: d.status });
-  res.status(201).json(decryptPatient(patient as Record<string, unknown>));
+  res.status(201).json(mapPatient(patient as Record<string, unknown>));
 });
 
 // ─── Update patient ───────────────────────────────────────────────────────────
@@ -131,7 +159,7 @@ router.patch('/:id', async (req: Request, res: Response) => {
   auditFromReq(req, 'patient.update', 'patient', req.params.id, {
     fields: Object.keys(d).filter(k => d[k] != null),
   });
-  res.json(decryptPatient(patient as Record<string, unknown>));
+  res.json(mapPatient(patient as Record<string, unknown>));
 });
 
 // ─── Delete patient ───────────────────────────────────────────────────────────
