@@ -56,7 +56,7 @@ router.post('/', async (req: Request, res: Response) => {
       status, priority, ward, bed, admit_date, discharge_date, diagnosis, allergies,
       insurance, attending_doctor, attending_doctor_id, assigned_nurse_id, assigned_nurse_name,
       death_date, death_cause, referred_hospital, referred_dept, referred_doctor,
-      referral_reason, referral_urgency
+      referral_reason, referral_urgency, locality
     ) VALUES (
       ${d.id}, ${clinicId}, ${encName}, ${d.age ?? null}, ${d.gender ?? 'M'}, ${d.mrn ?? null},
       ${encPhone}, ${d.email ?? null}, ${d.bloodGroup ?? null},
@@ -67,7 +67,7 @@ router.post('/', async (req: Request, res: Response) => {
       ${d.assignedNurseId ?? null}, ${d.assignedNurseName ?? null},
       ${d.deathDate ?? null}, ${d.deathCause ?? null}, ${d.referredHospital ?? null},
       ${d.referredDept ?? null}, ${d.referredDoctor ?? null},
-      ${d.referralReason ?? null}, ${d.referralUrgency ?? null}
+      ${d.referralReason ?? null}, ${d.referralUrgency ?? null}, ${d.locality ?? null}
     )
     ON CONFLICT (id) DO UPDATE SET
       name = EXCLUDED.name, age = EXCLUDED.age, gender = EXCLUDED.gender,
@@ -81,7 +81,7 @@ router.post('/', async (req: Request, res: Response) => {
       death_date = EXCLUDED.death_date, death_cause = EXCLUDED.death_cause,
       referred_hospital = EXCLUDED.referred_hospital, referred_dept = EXCLUDED.referred_dept,
       referred_doctor = EXCLUDED.referred_doctor, referral_reason = EXCLUDED.referral_reason,
-      referral_urgency = EXCLUDED.referral_urgency, updated_at = NOW()
+      referral_urgency = EXCLUDED.referral_urgency, locality = EXCLUDED.locality, updated_at = NOW()
     RETURNING *
   `;
 

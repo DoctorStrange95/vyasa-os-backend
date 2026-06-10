@@ -254,6 +254,9 @@ export async function runMigrations() {
     `;
   }
 
+  // Locality field for patients (area/neighbourhood)
+  await sql`ALTER TABLE patients ADD COLUMN IF NOT EXISTS locality TEXT`;
+
   // Audit log — every action by every user
   await sql`
     CREATE TABLE IF NOT EXISTS audit_log (

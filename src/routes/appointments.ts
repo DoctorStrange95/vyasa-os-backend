@@ -11,14 +11,22 @@ router.get('/', async (req: Request, res: Response) => {
 
   let rows;
   if (date) {
-    rows = await sql`SELECT * FROM appointments WHERE clinic_id = ${clinicId} AND date = ${date as string} ORDER BY time`;
+    rows = await sql`
+      SELECT a.*, cl.name AS clinic_name FROM appointments a
+      LEFT JOIN clinics cl ON cl.id = a.clinic_id
+      WHERE a.clinic_id = ${clinicId} AND a.date = ${date as string} ORDER BY a.time`;
   } else if (from && to) {
-    rows = await sql`SELECT * FROM appointments WHERE clinic_id = ${clinicId} AND date >= ${from as string} AND date <= ${to as string} ORDER BY date, time`;
+    rows = await sql`
+      SELECT a.*, cl.name AS clinic_name FROM appointments a
+      LEFT JOIN clinics cl ON cl.id = a.clinic_id
+      WHERE a.clinic_id = ${clinicId} AND a.date >= ${from as string} AND a.date <= ${to as string} ORDER BY a.date, a.time`;
   } else {
-    // Return upcoming 30 days by default
     const today = new Date().toISOString().slice(0, 10);
     const future = new Date(Date.now() + 30 * 86400000).toISOString().slice(0, 10);
-    rows = await sql`SELECT * FROM appointments WHERE clinic_id = ${clinicId} AND date >= ${today} AND date <= ${future} ORDER BY date, time`;
+    rows = await sql`
+      SELECT a.*, cl.name AS clinic_name FROM appointments a
+      LEFT JOIN clinics cl ON cl.id = a.clinic_id
+      WHERE a.clinic_id = ${clinicId} AND a.date >= ${today} AND a.date <= ${future} ORDER BY a.date, a.time`;
   }
 
   res.json(rows.map(r => ({
@@ -27,6 +35,7 @@ router.get('/', async (req: Request, res: Response) => {
     patientName: r.patient_name,
     patientAge: r.patient_age,
     clinicId: r.clinic_id,
+    clinicName: r.clinic_name ?? null,
     doctorId: r.doctor_id,
     doctorName: r.doctor_name,
     date: r.date,
