@@ -213,6 +213,11 @@ export async function runMigrations() {
   await sql`CREATE INDEX IF NOT EXISTS idx_login_sessions_user ON login_sessions(user_id)`;
   await sql`CREATE INDEX IF NOT EXISTS idx_login_sessions_time ON login_sessions(logged_in_at DESC)`;
 
+  // Store which doctor's clinic(s) a staff member was invited to
+  await sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS invited_clinic_ids TEXT`;
+  // Store invited clinic display name(s) for reference
+  await sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS invited_clinic_name TEXT`;
+
   console.log('✅ DB migrations complete');
 }
 

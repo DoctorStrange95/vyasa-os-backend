@@ -19,6 +19,7 @@ import appointmentsRouter from './routes/appointments';
 import clinicsRouter from './routes/clinics';
 import chatRouter from './routes/chat';
 import adminRouter from './routes/admin';
+import staffRouter from './routes/staff';
 import { AuthPayload } from './middleware/auth';
 
 const app = express();
@@ -204,6 +205,7 @@ app.use('/appointments', appointmentsRouter);
 app.use('/clinics', clinicsRouter);
 app.use('/chat', chatRouter);
 app.use('/admin', adminRouter);
+app.use('/staff', staffRouter);
 
 app.get('/health', (_req, res) => {
   res.json({ status: 'ok', time: new Date().toISOString() });

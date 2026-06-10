@@ -21,12 +21,32 @@ const RegisterSchema = z.object({
   state: z.string().optional(),
   city: z.string().optional(),
   googleId: z.string().optional(),
+  clinicIds: z.string().optional(),
+  clinicName: z.string().optional(),
 });
 
 const LoginSchema = z.object({
   email: z.string().email(),
   password: z.string(),
+  lat: z.number().optional(),
+  lng: z.number().optional(),
+  locationLabel: z.string().optional(),
 });
+
+async function logLoginSession(
+  req: Request,
+  user: { id: number; name: string; email: string; role: string },
+  geo?: { lat?: number; lng?: number; locationLabel?: string },
+) {
+  const ip = (req.headers['x-forwarded-for'] as string | undefined)?.split(',')[0]?.trim()
+    ?? req.socket.remoteAddress ?? null;
+  const ua = req.headers['user-agent'] ?? null;
+  await sql`
+    INSERT INTO login_sessions (user_id, user_name, user_email, user_role, ip_address, user_agent, lat, lng, location_label)
+    VALUES (${user.id}, ${user.name}, ${user.email}, ${user.role},
+            ${ip}, ${ua}, ${geo?.lat ?? null}, ${geo?.lng ?? null}, ${geo?.locationLabel ?? null})
+  `;
+}
 
 function makeTokens(payload: AuthPayload) {
   const accessToken = jwt.sign(payload, process.env.JWT_SECRET!, { expiresIn: '15m' });
@@ -42,7 +62,7 @@ router.post('/register', async (req: Request, res: Response) => {
     res.status(400).json({ error: parsed.error.issues[0].message });
     return;
   }
-  const { name, email, password, role, specialty, degrees, phone, licenseNumber, regState, state, city, googleId } = parsed.data;
+  const { name, email, password, role, specialty, degrees, phone, licenseNumber, regState, state, city, googleId, clinicIds, clinicName: invitedClinicName } = parsed.data;
 
   // Check existing
   const existing = await sql`SELECT id FROM users WHERE email = ${email}`;
@@ -58,9 +78,10 @@ router.post('/register', async (req: Request, res: Response) => {
 
   // Insert user
   const [user] = await sql`
-    INSERT INTO users (name, email, password_hash, role, specialty, degrees, phone, license_number, reg_state, state, city, google_id, approval_status)
+    INSERT INTO users (name, email, password_hash, role, specialty, degrees, phone, license_number, reg_state, state, city, google_id, approval_status, invited_clinic_ids, invited_clinic_name)
     VALUES (${name}, ${email}, ${passwordHash}, ${effectiveRole}, ${specialty ?? null}, ${degrees ?? null}, ${phone ?? null},
-            ${licenseNumber ?? null}, ${regState ?? null}, ${state ?? null}, ${city ?? null}, ${googleId ?? null}, ${approvalStatus})
+            ${licenseNumber ?? null}, ${regState ?? null}, ${state ?? null}, ${city ?? null}, ${googleId ?? null}, ${approvalStatus},
+            ${clinicIds ?? null}, ${invitedClinicName ?? null})
     RETURNING id, name, email, role, specialty, degrees, phone, clinic_id, approval_status
   `;
 
@@ -119,7 +140,7 @@ router.post('/login', async (req: Request, res: Response) => {
     res.status(400).json({ error: parsed.error.issues[0].message });
     return;
   }
-  const { email, password } = parsed.data;
+  const { email, password, lat, lng, locationLabel } = parsed.data;
 
   const [user] = await sql`
     SELECT id, name, email, role, password_hash, specialty, degrees, phone, clinic_id, approval_status
@@ -147,10 +168,10 @@ router.post('/login', async (req: Request, res: Response) => {
   const { accessToken, refreshToken } = makeTokens(payload);
 
   const expiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
-  await sql`
-    INSERT INTO refresh_tokens (user_id, token, expires_at)
-    VALUES (${user.id}, ${refreshToken}, ${expiresAt})
-  `;
+  await sql`INSERT INTO refresh_tokens (user_id, token, expires_at) VALUES (${user.id}, ${refreshToken}, ${expiresAt})`;
+
+  // Fire-and-forget session log (don't block the response)
+  logLoginSession(req, { id: user.id as number, name: user.name as string, email: user.email as string, role: user.role as string }, { lat, lng, locationLabel }).catch(() => {});
 
   res.json({
     accessToken,
