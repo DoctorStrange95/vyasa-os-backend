@@ -189,6 +189,11 @@ export async function runMigrations() {
   await sql`CREATE INDEX IF NOT EXISTS idx_appointments_clinic_date ON appointments(clinic_id, date)`;
   await sql`CREATE INDEX IF NOT EXISTS idx_chat_clinic ON chat_messages(clinic_id)`;
 
+  // Column additions for existing tables
+  await sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS reg_state TEXT`;
+  await sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS state TEXT`;
+  await sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS city TEXT`;
+
   console.log('✅ DB migrations complete');
 }
 

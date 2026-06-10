@@ -17,6 +17,9 @@ const RegisterSchema = z.object({
   degrees: z.string().optional(),
   phone: z.string().optional(),
   licenseNumber: z.string().optional(),
+  regState: z.string().optional(),
+  state: z.string().optional(),
+  city: z.string().optional(),
   googleId: z.string().optional(),
 });
 
@@ -39,7 +42,7 @@ router.post('/register', async (req: Request, res: Response) => {
     res.status(400).json({ error: parsed.error.issues[0].message });
     return;
   }
-  const { name, email, password, role, specialty, degrees, phone, licenseNumber, googleId } = parsed.data;
+  const { name, email, password, role, specialty, degrees, phone, licenseNumber, regState, state, city, googleId } = parsed.data;
 
   // Check existing
   const existing = await sql`SELECT id FROM users WHERE email = ${email}`;
@@ -55,9 +58,9 @@ router.post('/register', async (req: Request, res: Response) => {
 
   // Insert user
   const [user] = await sql`
-    INSERT INTO users (name, email, password_hash, role, specialty, degrees, phone, license_number, google_id, approval_status)
+    INSERT INTO users (name, email, password_hash, role, specialty, degrees, phone, license_number, reg_state, state, city, google_id, approval_status)
     VALUES (${name}, ${email}, ${passwordHash}, ${effectiveRole}, ${specialty ?? null}, ${degrees ?? null}, ${phone ?? null},
-            ${licenseNumber ?? null}, ${googleId ?? null}, ${approvalStatus})
+            ${licenseNumber ?? null}, ${regState ?? null}, ${state ?? null}, ${city ?? null}, ${googleId ?? null}, ${approvalStatus})
     RETURNING id, name, email, role, specialty, degrees, phone, clinic_id, approval_status
   `;
 
@@ -216,6 +219,35 @@ router.get('/me', requireAuth, async (req: Request, res: Response) => {
     return;
   }
   res.json(user);
+});
+
+// ─── Update profile ───────────────────────────────────────────────────────────
+
+router.patch('/me', requireAuth, async (req: Request, res: Response) => {
+  const { phone, specialty, degrees, regNumber } = req.body as {
+    phone?: string; specialty?: string; degrees?: string; regNumber?: string;
+  };
+  const userId = req.user!.userId;
+
+  await sql`
+    UPDATE users SET
+      phone = COALESCE(${phone ?? null}, phone),
+      specialty = COALESCE(${specialty ?? null}, specialty),
+      degrees = COALESCE(${degrees ?? null}, degrees),
+      reg_number = COALESCE(${regNumber ?? null}, reg_number)
+    WHERE id = ${userId}
+  `;
+
+  // Mirror to pad_settings too
+  await sql`
+    UPDATE pad_settings SET
+      specialty = COALESCE(${specialty ?? null}, specialty),
+      degrees = COALESCE(${degrees ?? null}, degrees),
+      reg_number = COALESCE(${regNumber ?? null}, reg_number)
+    WHERE user_id = ${userId}
+  `;
+
+  res.json({ ok: true });
 });
 
 export default router;
