@@ -120,32 +120,37 @@ io.on('connection', socket => {
 const googleClient = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
 
 app.post('/auth/google', async (req, res) => {
-  const { idToken, profileData } = req.body;
+  const { idToken, accessToken: googleAccessToken } = req.body as { idToken?: string; accessToken?: string };
 
-  if (!idToken) {
-    res.status(400).json({ error: 'Missing Google ID token' });
-    return;
+  let googleEmail = '', googleName = 'Doctor';
+
+  // Try ID token first (from GoogleLogin component)
+  if (idToken) {
+    try {
+      const ticket = await googleClient.verifyIdToken({ idToken, audience: process.env.GOOGLE_CLIENT_ID });
+      const payload = ticket.getPayload()!;
+      googleEmail = payload.email!;
+      googleName = payload.name ?? 'Doctor';
+    } catch { /* fall through to access token */ }
   }
 
-  let googleEmail: string, googleName: string;
+  // Fall back to access token (from useGoogleLogin hook with flow='implicit')
+  if (!googleEmail && googleAccessToken) {
+    try {
+      const r = await fetch(`https://www.googleapis.com/oauth2/v3/userinfo`, {
+        headers: { Authorization: `Bearer ${googleAccessToken}` },
+      });
+      if (r.ok) {
+        const info = await r.json() as { email?: string; name?: string };
+        googleEmail = info.email ?? '';
+        googleName = info.name ?? 'Doctor';
+      }
+    } catch { /* fall through */ }
+  }
 
-  try {
-    const ticket = await googleClient.verifyIdToken({
-      idToken,
-      audience: process.env.GOOGLE_CLIENT_ID,
-    });
-    const payload = ticket.getPayload()!;
-    googleEmail = payload.email!;
-    googleName = payload.name ?? profileData?.name ?? 'Doctor';
-  } catch {
-    // In dev/test mode without proper Google client ID, fall back to profile data
-    if (process.env.NODE_ENV !== 'production' && profileData?.email) {
-      googleEmail = profileData.email as string;
-      googleName = profileData.name as string ?? 'Doctor';
-    } else {
-      res.status(401).json({ error: 'Invalid Google token' });
-      return;
-    }
+  if (!googleEmail) {
+    res.status(401).json({ error: 'Invalid Google token' });
+    return;
   }
 
   // Check if user exists
