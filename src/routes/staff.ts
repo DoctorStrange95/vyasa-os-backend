@@ -18,15 +18,21 @@ router.get('/pending', async (req: Request, res: Response) => {
     return;
   }
 
-  // Find pending users who listed any of these clinic IDs in their invitation
-  // Use a pattern match per clinic ID with OR logic via raw check
+  // Two groups:
+  // 1. Users who registered via the invite link (invited_clinic_ids is set) — match by clinic ID
+  // 2. Users who registered before the invited_clinic_ids column was added (NULL) — show all
+  //    unassigned pending staff so the doctor can approve them manually
   const likePatterns = clinicIds.map(id => `%${id}%`);
   const pending = await sql`
-    SELECT id, name, email, phone, role, degrees, specialty, invited_clinic_ids, invited_clinic_name, created_at
+    SELECT id, name, email, phone, role, degrees, specialty,
+           invited_clinic_ids, invited_clinic_name, created_at
     FROM users
     WHERE approval_status = 'pending'
-      AND role NOT IN ('clinic_admin', 'superadmin')
-      AND invited_clinic_ids LIKE ANY(${likePatterns})
+      AND role NOT IN ('clinic_admin', 'superadmin', 'patient')
+      AND (
+        invited_clinic_ids LIKE ANY(${likePatterns})
+        OR invited_clinic_ids IS NULL
+      )
     ORDER BY created_at DESC
   `;
 
