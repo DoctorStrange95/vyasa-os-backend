@@ -1,18 +1,31 @@
 import { Router, Request, Response } from 'express';
 import { requireAuth } from '../middleware/auth';
 import sql from '../db';
+import { maybeEncrypt, maybeDecrypt } from '../lib/crypto';
+import { auditFromReq } from '../lib/audit';
 
 const router = Router();
 router.use(requireAuth);
+
+function decryptPatient(p: Record<string, unknown>): Record<string, unknown> {
+  return {
+    ...p,
+    name: maybeDecrypt(p.name as string),
+    phone: maybeDecrypt(p.phone as string),
+    diagnosis: maybeDecrypt(p.diagnosis as string),
+  };
+}
 
 // ─── List patients for clinic ─────────────────────────────────────────────────
 
 router.get('/', async (req: Request, res: Response) => {
   const clinicId = req.user!.clinicId;
-  const patients = await sql`
+  const rows = await sql`
     SELECT * FROM patients WHERE clinic_id = ${clinicId}
     ORDER BY created_at DESC
   `;
+  const patients = rows.map(decryptPatient);
+  auditFromReq(req, 'patient.read', 'patients', clinicId, { count: patients.length });
   res.json(patients);
 });
 
@@ -23,7 +36,8 @@ router.get('/:id', async (req: Request, res: Response) => {
     SELECT * FROM patients WHERE id = ${req.params.id} AND clinic_id = ${req.user!.clinicId}
   `;
   if (!p) { res.status(404).json({ error: 'Patient not found' }); return; }
-  res.json(p);
+  auditFromReq(req, 'patient.read', 'patient', req.params.id);
+  res.json(decryptPatient(p as Record<string, unknown>));
 });
 
 // ─── Create / Upsert patient ──────────────────────────────────────────────────
@@ -31,6 +45,10 @@ router.get('/:id', async (req: Request, res: Response) => {
 router.post('/', async (req: Request, res: Response) => {
   const clinicId = req.user!.clinicId;
   const d = req.body;
+
+  const encName = maybeEncrypt(d.name);
+  const encPhone = maybeEncrypt(d.phone ?? null);
+  const encDiagnosis = maybeEncrypt(d.diagnosis ?? null);
 
   const [patient] = await sql`
     INSERT INTO patients (
@@ -40,10 +58,10 @@ router.post('/', async (req: Request, res: Response) => {
       death_date, death_cause, referred_hospital, referred_dept, referred_doctor,
       referral_reason, referral_urgency
     ) VALUES (
-      ${d.id}, ${clinicId}, ${d.name}, ${d.age ?? null}, ${d.gender ?? 'M'}, ${d.mrn ?? null},
-      ${d.phone ?? null}, ${d.email ?? null}, ${d.bloodGroup ?? null},
+      ${d.id}, ${clinicId}, ${encName}, ${d.age ?? null}, ${d.gender ?? 'M'}, ${d.mrn ?? null},
+      ${encPhone}, ${d.email ?? null}, ${d.bloodGroup ?? null},
       ${d.status ?? 'OPD'}, ${d.priority ?? 'Stable'}, ${d.ward ?? null}, ${d.bed ?? null},
-      ${d.admitDate ?? null}, ${d.dischargeDate ?? null}, ${d.diagnosis ?? null},
+      ${d.admitDate ?? null}, ${d.dischargeDate ?? null}, ${encDiagnosis},
       ${JSON.stringify(d.allergies ?? [])},
       ${d.insurance ?? null}, ${d.attendingDoctor ?? null}, ${d.attendingDoctorId ?? null},
       ${d.assignedNurseId ?? null}, ${d.assignedNurseName ?? null},
@@ -66,19 +84,25 @@ router.post('/', async (req: Request, res: Response) => {
       referral_urgency = EXCLUDED.referral_urgency, updated_at = NOW()
     RETURNING *
   `;
-  res.status(201).json(patient);
+
+  auditFromReq(req, 'patient.create', 'patient', d.id, { mrn: d.mrn, status: d.status });
+  res.status(201).json(decryptPatient(patient as Record<string, unknown>));
 });
 
 // ─── Update patient ───────────────────────────────────────────────────────────
 
 router.patch('/:id', async (req: Request, res: Response) => {
   const d = req.body;
+  const encName = d.name != null ? maybeEncrypt(d.name) : null;
+  const encPhone = d.phone != null ? maybeEncrypt(d.phone) : null;
+  const encDiagnosis = d.diagnosis != null ? maybeEncrypt(d.diagnosis) : null;
+
   const [patient] = await sql`
     UPDATE patients SET
-      name = COALESCE(${d.name ?? null}, name),
+      name = COALESCE(${encName}, name),
       age = COALESCE(${d.age ?? null}, age),
       gender = COALESCE(${d.gender ?? null}, gender),
-      phone = COALESCE(${d.phone ?? null}, phone),
+      phone = COALESCE(${encPhone}, phone),
       email = COALESCE(${d.email ?? null}, email),
       blood_group = COALESCE(${d.bloodGroup ?? null}, blood_group),
       status = COALESCE(${d.status ?? null}, status),
@@ -87,7 +111,7 @@ router.patch('/:id', async (req: Request, res: Response) => {
       bed = COALESCE(${d.bed ?? null}, bed),
       admit_date = COALESCE(${d.admitDate ?? null}, admit_date),
       discharge_date = COALESCE(${d.dischargeDate ?? null}, discharge_date),
-      diagnosis = COALESCE(${d.diagnosis ?? null}, diagnosis),
+      diagnosis = COALESCE(${encDiagnosis}, diagnosis),
       allergies = COALESCE(${d.allergies ? JSON.stringify(d.allergies) : null}::jsonb, allergies),
       insurance = COALESCE(${d.insurance ?? null}, insurance),
       attending_doctor = COALESCE(${d.attendingDoctor ?? null}, attending_doctor),
@@ -103,7 +127,11 @@ router.patch('/:id', async (req: Request, res: Response) => {
     RETURNING *
   `;
   if (!patient) { res.status(404).json({ error: 'Patient not found' }); return; }
-  res.json(patient);
+
+  auditFromReq(req, 'patient.update', 'patient', req.params.id, {
+    fields: Object.keys(d).filter(k => d[k] != null),
+  });
+  res.json(decryptPatient(patient as Record<string, unknown>));
 });
 
 // ─── Delete patient ───────────────────────────────────────────────────────────
@@ -112,6 +140,7 @@ router.delete('/:id', async (req: Request, res: Response) => {
   await sql`
     DELETE FROM patients WHERE id = ${req.params.id} AND clinic_id = ${req.user!.clinicId}
   `;
+  auditFromReq(req, 'patient.delete', 'patient', req.params.id);
   res.json({ ok: true });
 });
 

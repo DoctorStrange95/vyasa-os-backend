@@ -254,6 +254,28 @@ export async function runMigrations() {
     `;
   }
 
+  // Audit log — every action by every user
+  await sql`
+    CREATE TABLE IF NOT EXISTS audit_log (
+      id BIGSERIAL PRIMARY KEY,
+      actor_id INTEGER,
+      actor_name TEXT,
+      actor_role TEXT,
+      clinic_id TEXT,
+      action TEXT NOT NULL,
+      resource_type TEXT NOT NULL,
+      resource_id TEXT,
+      details JSONB,
+      ip_address TEXT,
+      user_agent TEXT,
+      created_at TIMESTAMPTZ DEFAULT NOW()
+    )
+  `;
+  await sql`CREATE INDEX IF NOT EXISTS idx_audit_actor ON audit_log(actor_id)`;
+  await sql`CREATE INDEX IF NOT EXISTS idx_audit_clinic ON audit_log(clinic_id)`;
+  await sql`CREATE INDEX IF NOT EXISTS idx_audit_time ON audit_log(created_at DESC)`;
+  await sql`CREATE INDEX IF NOT EXISTS idx_audit_resource ON audit_log(resource_type, resource_id)`;
+
   console.log('✅ DB migrations complete');
 }
 

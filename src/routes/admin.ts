@@ -58,4 +58,45 @@ router.get('/stats', async (_req: Request, res: Response) => {
   res.json({ users, patients, visits });
 });
 
+// ─── Audit log (superadmin) ───────────────────────────────────────────────────
+
+router.get('/audit', async (req: Request, res: Response) => {
+  const limit = Math.min(Number(req.query.limit ?? 100), 500);
+  const offset = Number(req.query.offset ?? 0);
+  const clinicId = req.query.clinic_id as string | undefined;
+  const actorId = req.query.actor_id as string | undefined;
+
+  const rows = clinicId
+    ? await sql`
+        SELECT * FROM audit_log
+        WHERE clinic_id = ${clinicId}
+        ORDER BY created_at DESC LIMIT ${limit} OFFSET ${offset}`
+    : actorId
+    ? await sql`
+        SELECT * FROM audit_log
+        WHERE actor_id = ${Number(actorId)}
+        ORDER BY created_at DESC LIMIT ${limit} OFFSET ${offset}`
+    : await sql`
+        SELECT * FROM audit_log
+        ORDER BY created_at DESC LIMIT ${limit} OFFSET ${offset}`;
+
+  res.json(rows);
+});
+
+// ─── Clinic-scoped audit log (doctor sees their own clinic's log) ─────────────
+
+export async function getClinicAuditLog(req: Request, res: Response) {
+  const clinicId = req.user!.clinicId;
+  const limit = Math.min(Number(req.query.limit ?? 50), 200);
+  const offset = Number(req.query.offset ?? 0);
+
+  const rows = await sql`
+    SELECT id, actor_name, actor_role, action, resource_type, resource_id, details, ip_address, created_at
+    FROM audit_log
+    WHERE clinic_id = ${clinicId}
+    ORDER BY created_at DESC LIMIT ${limit} OFFSET ${offset}
+  `;
+  res.json(rows);
+}
+
 export default router;

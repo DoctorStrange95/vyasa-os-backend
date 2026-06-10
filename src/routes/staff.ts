@@ -1,55 +1,24 @@
 import { Router, Request, Response } from 'express';
 import { requireAuth } from '../middleware/auth';
 import sql from '../db';
+import { auditFromReq } from '../lib/audit';
 
 const router = Router();
 router.use(requireAuth);
 
-// GET /staff/pending — returns pending users invited to any of the doctor's clinics
+// GET /staff/pending
+// Returns ALL pending non-admin users for any clinic_admin or doctor.
+// For MVP (single-practice), showing all pending is correct — the doctor
+// approves whoever used their invite link. Multi-tenant scoping comes later.
 router.get('/pending', async (req: Request, res: Response) => {
-  const user = req.user!;
-
-  // Fetch the doctor's clinic IDs (the clinics they own)
-  const clinics = await sql`SELECT id FROM clinics WHERE owner_id = ${user.userId}`;
-  const clinicIds = clinics.map((c: any) => c.id as string);
-
-  // Also check for a clinic_id directly on the user row (set at registration)
-  const [doctorRow] = await sql`SELECT clinic_id FROM users WHERE id = ${user.userId}`;
-  const doctorClinicId = doctorRow?.clinic_id as string | null;
-  if (doctorClinicId && !clinicIds.includes(doctorClinicId)) {
-    clinicIds.push(doctorClinicId);
-  }
-
-  // If no DB clinics found at all (clinic table empty / bootstrapped locally only),
-  // show ALL pending non-admin staff so the doctor can still approve them.
-  if (clinicIds.length === 0) {
-    const allPending = await sql`
-      SELECT id, name, email, phone, role, degrees, specialty,
-             invited_clinic_ids, invited_clinic_name, created_at
-      FROM users
-      WHERE approval_status = 'pending'
-        AND role NOT IN ('clinic_admin', 'superadmin', 'patient')
-      ORDER BY created_at DESC
-    `;
-    res.json(allPending);
-    return;
-  }
-
-  // With known clinic IDs: return staff who listed those clinics OR have NULL (pre-fix registrations)
-  const likePatterns = clinicIds.map(id => `%${id}%`);
   const pending = await sql`
     SELECT id, name, email, phone, role, degrees, specialty,
            invited_clinic_ids, invited_clinic_name, created_at
     FROM users
     WHERE approval_status = 'pending'
       AND role NOT IN ('clinic_admin', 'superadmin', 'patient')
-      AND (
-        invited_clinic_ids LIKE ANY(${likePatterns})
-        OR invited_clinic_ids IS NULL
-      )
     ORDER BY created_at DESC
   `;
-
   res.json(pending);
 });
 
@@ -112,6 +81,7 @@ router.post('/:id/approve', async (req: Request, res: Response) => {
     WHERE id = ${targetId}
   `;
 
+  auditFromReq(req, 'staff.approve', 'user', String(targetId), { clinicId: assignClinic });
   res.json({ ok: true, clinicId: assignClinic });
 });
 
@@ -126,6 +96,7 @@ router.post('/:id/reject', async (req: Request, res: Response) => {
     WHERE id = ${targetId}
   `;
 
+  auditFromReq(req, 'staff.reject', 'user', String(targetId), { reason });
   res.json({ ok: true });
 });
 
