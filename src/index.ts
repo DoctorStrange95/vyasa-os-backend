@@ -20,6 +20,7 @@ import clinicsRouter from './routes/clinics';
 import chatRouter from './routes/chat';
 import adminRouter from './routes/admin';
 import staffRouter from './routes/staff';
+import publicRouter from './routes/public';
 import { AuthPayload } from './middleware/auth';
 
 const app = express();
@@ -206,9 +207,73 @@ app.use('/clinics', clinicsRouter);
 app.use('/chat', chatRouter);
 app.use('/admin', adminRouter);
 app.use('/staff', staffRouter);
+app.use('/public', publicRouter);
 
 app.get('/health', (_req, res) => {
   res.json({ status: 'ok', time: new Date().toISOString() });
+});
+
+// ─── Public profile settings (authenticated) ──────────────────────────────────
+import { requireAuth } from './middleware/auth';
+
+app.patch('/auth/me/public-profile', requireAuth, async (req, res) => {
+  const userId = req.user!.userId;
+  const allowed = ['bio', 'languages', 'accepting_patients', 'public_profile_enabled',
+                   'gbp_url', 'years_experience', 'consultation_fee'];
+  const fields: string[] = [], vals: unknown[] = [];
+  for (const k of allowed) {
+    if (req.body[k] !== undefined) { fields.push(`${k} = $${fields.length + 2}`); vals.push(req.body[k]); }
+  }
+  if (!fields.length) { res.status(400).json({ error: 'Nothing to update' }); return; }
+  try {
+    const rows = await sql(`UPDATE users SET ${fields.join(', ')} WHERE id = $1 RETURNING profile_slug, accepting_patients, public_profile_enabled, bio, gbp_url, languages, years_experience, consultation_fee`, [userId, ...vals]);
+    res.json(rows[0]);
+  } catch (e: any) { res.status(500).json({ error: e.message }); }
+});
+
+app.get('/auth/me/public-profile', requireAuth, async (req, res) => {
+  const userId = req.user!.userId;
+  try {
+    const rows = await sql`
+      SELECT profile_slug, accepting_patients, public_profile_enabled, bio,
+             gbp_url, languages, years_experience, consultation_fee
+      FROM users WHERE id = ${userId}
+    `;
+    res.json(rows[0] ?? null);
+  } catch (e: any) { res.status(500).json({ error: e.message }); }
+});
+
+// ─── Booking requests (authenticated) ────────────────────────────────────────
+app.get('/booking-requests', requireAuth, async (req, res) => {
+  const userId = req.user!.userId;
+  const { status } = req.query;
+  try {
+    const rows = status
+      ? await sql`SELECT * FROM booking_requests WHERE doctor_id = ${userId} AND status = ${status as string} ORDER BY created_at DESC`
+      : await sql`SELECT * FROM booking_requests WHERE doctor_id = ${userId} ORDER BY created_at DESC LIMIT 200`;
+    res.json(rows);
+  } catch (e: any) { res.status(500).json({ error: e.message }); }
+});
+
+app.patch('/booking-requests/:id', requireAuth, async (req, res) => {
+  const userId = req.user!.userId;
+  const { status, notes } = req.body;
+  if (!['confirmed', 'cancelled', 'pending'].includes(status)) {
+    res.status(400).json({ error: 'Invalid status' }); return;
+  }
+  try {
+    const rows = await sql`
+      UPDATE booking_requests
+      SET status = ${status},
+          notes = COALESCE(${notes ?? null}, notes),
+          confirmed_at = CASE WHEN ${status} = 'confirmed' THEN NOW() ELSE NULL END,
+          confirmed_by = CASE WHEN ${status} = 'confirmed' THEN ${userId} ELSE NULL END
+      WHERE id = ${req.params.id} AND doctor_id = ${userId}
+      RETURNING *
+    `;
+    if (!rows.length) { res.status(404).json({ error: 'Not found' }); return; }
+    res.json(rows[0]);
+  } catch (e: any) { res.status(500).json({ error: e.message }); }
 });
 
 // ─── Boot ─────────────────────────────────────────────────────────────────────

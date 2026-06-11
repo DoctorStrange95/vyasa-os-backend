@@ -282,6 +282,52 @@ export async function runMigrations() {
   await sql`CREATE INDEX IF NOT EXISTS idx_audit_time ON audit_log(created_at DESC)`;
   await sql`CREATE INDEX IF NOT EXISTS idx_audit_resource ON audit_log(resource_type, resource_id)`;
 
+  // ── Public Profile fields on users ────────────────────────────────────────
+  await sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS profile_slug TEXT UNIQUE`;
+  await sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS bio TEXT DEFAULT ''`;
+  await sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS languages TEXT DEFAULT ''`;
+  await sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS accepting_patients BOOLEAN DEFAULT true`;
+  await sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS public_profile_enabled BOOLEAN DEFAULT true`;
+  await sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS gbp_url TEXT DEFAULT ''`;
+  await sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS years_experience INTEGER DEFAULT 0`;
+  await sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS consultation_fee INTEGER`;
+  await sql`ALTER TABLE clinics ADD COLUMN IF NOT EXISTS public_enabled BOOLEAN DEFAULT true`;
+
+  // Auto-generate profile_slug for clinic_admin users who don't have one
+  const noSlug = await sql`SELECT id, name FROM users WHERE role = 'clinic_admin' AND profile_slug IS NULL`;
+  for (const u of noSlug) {
+    const base = (u.name as string).toLowerCase().replace(/^dr\.?\s+/i, '').replace(/[^a-z0-9\s]/g, '').trim().replace(/\s+/g, '-').slice(0, 80);
+    let slug = base, n = 2;
+    while (true) {
+      const existing = await sql`SELECT id FROM users WHERE profile_slug = ${slug}`;
+      if (!existing.length) break;
+      slug = `${base}-${n++}`;
+    }
+    await sql`UPDATE users SET profile_slug = ${slug} WHERE id = ${u.id}`;
+  }
+
+  // ── Booking requests table ─────────────────────────────────────────────────
+  await sql`
+    CREATE TABLE IF NOT EXISTS booking_requests (
+      id BIGSERIAL PRIMARY KEY,
+      doctor_id INTEGER NOT NULL REFERENCES users(id),
+      clinic_id TEXT,
+      patient_name TEXT NOT NULL,
+      patient_phone TEXT NOT NULL,
+      patient_age INTEGER,
+      reason TEXT DEFAULT '',
+      preferred_date TEXT,
+      preferred_time TEXT,
+      status TEXT DEFAULT 'pending',
+      notes TEXT DEFAULT '',
+      created_at TIMESTAMPTZ DEFAULT NOW(),
+      confirmed_at TIMESTAMPTZ,
+      confirmed_by INTEGER
+    )
+  `;
+  await sql`CREATE INDEX IF NOT EXISTS idx_booking_requests_doctor ON booking_requests(doctor_id)`;
+  await sql`CREATE INDEX IF NOT EXISTS idx_booking_requests_status ON booking_requests(doctor_id, status)`;
+
   console.log('✅ DB migrations complete');
 }
 
