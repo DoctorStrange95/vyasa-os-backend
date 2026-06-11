@@ -328,6 +328,19 @@ export async function runMigrations() {
   await sql`CREATE INDEX IF NOT EXISTS idx_booking_requests_doctor ON booking_requests(doctor_id)`;
   await sql`CREATE INDEX IF NOT EXISTS idx_booking_requests_status ON booking_requests(doctor_id, status)`;
 
+  // Backfill reg_number from license_number for users who registered via the MCI/CI field
+  await sql`
+    UPDATE users SET reg_number = license_number
+    WHERE license_number IS NOT NULL AND license_number != ''
+      AND (reg_number IS NULL OR reg_number = '')
+  `;
+  await sql`
+    UPDATE pad_settings ps SET reg_number = u.license_number
+    FROM users u WHERE u.id = ps.user_id
+      AND u.license_number IS NOT NULL AND u.license_number != ''
+      AND (ps.reg_number IS NULL OR ps.reg_number = '')
+  `;
+
   console.log('✅ DB migrations complete');
 }
 
