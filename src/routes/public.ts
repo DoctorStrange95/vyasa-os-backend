@@ -247,4 +247,94 @@ router.post('/doctor/:slug/book', async (req: Request, res: Response) => {
   }
 });
 
+// ─── GET /public/doctors — doctor directory (no auth) ────────────────────────
+router.get('/doctors', async (req: Request, res: Response) => {
+  const { state, city, specialty, search, limit = '50', offset = '0' } = req.query as Record<string, string>;
+  try {
+    // Build all filters without dynamic SQL — use nullable params pattern
+    const rows = await sql`
+      SELECT u.id, u.name, u.specialty, u.degrees,
+             COALESCE(u.reg_number, u.license_number) AS reg_number,
+             u.profile_slug, u.profile_photo_url,
+             u.years_experience, u.consultation_fee,
+             u.accepting_patients, u.city, u.state,
+             u.bio,
+             p.doctor_name, p.clinic_name, p.address, p.timings, p.phone
+      FROM users u
+      LEFT JOIN pad_settings p ON p.user_id = u.id
+      WHERE u.public_profile_enabled = true
+        AND u.approval_status = 'approved'
+        AND u.profile_slug IS NOT NULL
+        AND (${state ?? null}::text IS NULL OR LOWER(u.state) = LOWER(${state ?? ''}))
+        AND (${city ?? null}::text IS NULL OR LOWER(u.city) = LOWER(${city ?? ''}))
+        AND (${specialty ?? null}::text IS NULL OR LOWER(u.specialty) ILIKE ${specialty ? `%${specialty}%` : ''})
+        AND (${search ?? null}::text IS NULL
+             OR LOWER(u.name) ILIKE ${search ? `%${search}%` : ''}
+             OR LOWER(u.specialty) ILIKE ${search ? `%${search}%` : ''}
+             OR LOWER(u.city) ILIKE ${search ? `%${search}%` : ''}
+             OR LOWER(p.clinic_name) ILIKE ${search ? `%${search}%` : ''})
+      ORDER BY u.created_at DESC
+      LIMIT ${Number(limit)} OFFSET ${Number(offset)}
+    `;
+
+    const total = await sql`
+      SELECT COUNT(*) AS n FROM users u
+      LEFT JOIN pad_settings p ON p.user_id = u.id
+      WHERE u.public_profile_enabled = true
+        AND u.approval_status = 'approved'
+        AND u.profile_slug IS NOT NULL
+    `;
+
+    // Fetch distinct states + cities for filter UI
+    const states = await sql`
+      SELECT DISTINCT state FROM users
+      WHERE public_profile_enabled = true AND approval_status = 'approved'
+        AND profile_slug IS NOT NULL AND state IS NOT NULL AND state != ''
+      ORDER BY state
+    `;
+    const cities = await sql`
+      SELECT DISTINCT city FROM users
+      WHERE public_profile_enabled = true AND approval_status = 'approved'
+        AND profile_slug IS NOT NULL AND city IS NOT NULL AND city != ''
+        AND (${state ?? null}::text IS NULL OR LOWER(state) = LOWER(${state ?? ''}))
+      ORDER BY city
+    `;
+    const specialties = await sql`
+      SELECT DISTINCT specialty FROM users
+      WHERE public_profile_enabled = true AND approval_status = 'approved'
+        AND profile_slug IS NOT NULL AND specialty IS NOT NULL AND specialty != ''
+      ORDER BY specialty
+    `;
+
+    res.json({
+      doctors: rows.map(r => ({
+        id: r.id,
+        name: r.doctor_name || r.name,
+        specialty: r.specialty || '',
+        qualification: r.degrees || '',
+        profileSlug: r.profile_slug,
+        profilePhotoUrl: r.profile_photo_url || '',
+        yearsExperience: r.years_experience || 0,
+        consultationFee: r.consultation_fee || null,
+        acceptingPatients: r.accepting_patients !== false,
+        city: r.city || '',
+        state: r.state || '',
+        clinicName: r.clinic_name || '',
+        clinicAddress: r.address || '',
+        clinicPhone: r.phone || '',
+        timings: r.timings || '',
+        bio: (r.bio as string)?.slice(0, 120) || '',
+      })),
+      total: Number(total[0]?.n ?? 0),
+      filters: {
+        states: states.map(r => r.state as string),
+        cities: cities.map(r => r.city as string),
+        specialties: specialties.map(r => r.specialty as string),
+      },
+    });
+  } catch (e: any) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 export default router;
