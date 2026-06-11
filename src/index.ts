@@ -291,11 +291,11 @@ app.patch('/booking-requests/:id', requireAuth, async (req, res) => {
   try {
     const rows = await sql`
       UPDATE booking_requests
-      SET status = ${status},
-          notes = COALESCE(${notes ?? null}, notes),
-          confirmed_at = CASE WHEN ${status} = 'confirmed' THEN NOW() ELSE NULL END,
-          confirmed_by = CASE WHEN ${status} = 'confirmed' THEN ${userId} ELSE NULL END
-      WHERE id = ${req.params.id} AND doctor_id = ${userId}
+      SET status = ${status}::text,
+          notes = COALESCE(${notes ?? null}::text, notes),
+          confirmed_at = CASE WHEN ${status}::text = 'confirmed' THEN NOW() ELSE NULL END,
+          confirmed_by = CASE WHEN ${status}::text = 'confirmed' THEN ${userId}::integer ELSE NULL END
+      WHERE id = ${Number(req.params.id)} AND doctor_id = ${userId}
       RETURNING *
     `;
     if (!rows.length) { res.status(404).json({ error: 'Not found' }); return; }

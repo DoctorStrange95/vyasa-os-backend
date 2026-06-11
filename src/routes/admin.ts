@@ -19,11 +19,29 @@ router.use(requireSuperAdmin);
 
 router.get('/users', async (_req: Request, res: Response) => {
   const users = await sql`
-    SELECT id, name, email, role, specialty, degrees, phone, reg_number, approval_status, created_at
-    FROM users
-    ORDER BY created_at DESC
+    SELECT u.id, u.name, u.email, u.role, u.specialty, u.degrees, u.phone,
+           u.reg_number, u.license_number, u.state, u.city, u.profile_slug,
+           u.approval_status, u.rejection_reason, u.created_at,
+           ls.last_login, COALESCE(ls.login_count, 0) AS login_count
+    FROM users u
+    LEFT JOIN (
+      SELECT user_id, MAX(logged_in_at) AS last_login, COUNT(*) AS login_count
+      FROM login_sessions GROUP BY user_id
+    ) ls ON ls.user_id = u.id
+    ORDER BY u.created_at DESC
   `;
   res.json(users);
+});
+
+// ─── Login sessions for a user (full timestamp history) ──────────────────────
+
+router.get('/users/:id/sessions', async (req: Request, res: Response) => {
+  const rows = await sql`
+    SELECT logged_in_at, ip_address, user_agent, location_label, lat, lng
+    FROM login_sessions WHERE user_id = ${Number(req.params.id)}
+    ORDER BY logged_in_at DESC LIMIT 100
+  `;
+  res.json(rows);
 });
 
 // ─── Approve a user (allow full prescription access) ─────────────────────────
@@ -52,10 +70,26 @@ router.post('/users/:id/suspend', async (req: Request, res: Response) => {
 // ─── Analytics ───────────────────────────────────────────────────────────────
 
 router.get('/stats', async (_req: Request, res: Response) => {
-  const [users] = await sql`SELECT COUNT(*) as total, SUM(CASE WHEN approval_status='approved' THEN 1 ELSE 0 END) as approved, SUM(CASE WHEN approval_status='pending' THEN 1 ELSE 0 END) as pending FROM users WHERE role != 'superadmin'`;
+  const [users] = await sql`
+    SELECT COUNT(*) as total,
+           SUM(CASE WHEN approval_status='approved' THEN 1 ELSE 0 END) as approved,
+           SUM(CASE WHEN approval_status='pending'  THEN 1 ELSE 0 END) as pending,
+           SUM(CASE WHEN approval_status='rejected' THEN 1 ELSE 0 END) as rejected,
+           SUM(CASE WHEN role IN ('clinic_admin','doctor') THEN 1 ELSE 0 END) as doctors,
+           SUM(CASE WHEN created_at > NOW() - INTERVAL '7 days' THEN 1 ELSE 0 END) as new_this_week
+    FROM users WHERE role != 'superadmin'`;
   const [patients] = await sql`SELECT COUNT(*) as total FROM patients`;
   const [visits] = await sql`SELECT COUNT(*) as total FROM visits`;
-  res.json({ users, patients, visits });
+  const [bookings] = await sql`
+    SELECT COUNT(*) as total,
+           SUM(CASE WHEN status='pending' THEN 1 ELSE 0 END) as pending,
+           SUM(CASE WHEN created_at > NOW() - INTERVAL '7 days' THEN 1 ELSE 0 END) as this_week
+    FROM booking_requests`;
+  const [logins] = await sql`
+    SELECT COUNT(*) as total,
+           SUM(CASE WHEN logged_in_at > NOW() - INTERVAL '24 hours' THEN 1 ELSE 0 END) as last_24h
+    FROM login_sessions`;
+  res.json({ users, patients, visits, bookings, logins });
 });
 
 // ─── Audit log (superadmin) ───────────────────────────────────────────────────
