@@ -331,6 +331,11 @@ export async function runMigrations() {
   // Doctor public profile photo
   await sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS profile_photo_url TEXT`;
 
+  // Doctor social-presence fields: education history, services offered, awards
+  await sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS education TEXT DEFAULT ''`;
+  await sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS services TEXT DEFAULT ''`;
+  await sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS awards TEXT DEFAULT ''`;
+
   // Backfill reg_number from license_number for users who registered via the MCI/CI field
   await sql`
     UPDATE users SET reg_number = license_number

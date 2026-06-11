@@ -223,6 +223,7 @@ app.patch('/auth/me/public-profile', requireAuth, async (req, res) => {
   const {
     bio, languages, accepting_patients, public_profile_enabled,
     gbp_url, years_experience, consultation_fee, profile_photo_url,
+    education, services, awards,
   } = req.body as Record<string, unknown>;
   try {
     const ap  = accepting_patients   != null ? Boolean(accepting_patients)   : null;
@@ -238,10 +239,14 @@ app.patch('/auth/me/public-profile', requireAuth, async (req, res) => {
         gbp_url                = COALESCE(${(gbp_url        ?? null) as string | null}::text,    gbp_url),
         years_experience       = COALESCE(${ye}::integer,   years_experience),
         consultation_fee       = COALESCE(${cf}::integer,   consultation_fee),
-        profile_photo_url      = COALESCE(${(profile_photo_url ?? null) as string | null}::text, profile_photo_url)
+        profile_photo_url      = COALESCE(${(profile_photo_url ?? null) as string | null}::text, profile_photo_url),
+        education              = COALESCE(${(education      ?? null) as string | null}::text,    education),
+        services               = COALESCE(${(services       ?? null) as string | null}::text,    services),
+        awards                 = COALESCE(${(awards         ?? null) as string | null}::text,    awards)
       WHERE id = ${userId}
       RETURNING profile_slug, accepting_patients, public_profile_enabled, bio,
-                gbp_url, languages, years_experience, consultation_fee, profile_photo_url
+                gbp_url, languages, years_experience, consultation_fee, profile_photo_url,
+                education, services, awards
     `;
     res.json(rows[0] ?? {});
   } catch (e: any) {
@@ -255,7 +260,8 @@ app.get('/auth/me/public-profile', requireAuth, async (req, res) => {
   try {
     const rows = await sql`
       SELECT profile_slug, accepting_patients, public_profile_enabled, bio,
-             gbp_url, languages, years_experience, consultation_fee, profile_photo_url
+             gbp_url, languages, years_experience, consultation_fee, profile_photo_url,
+             education, services, awards
       FROM users WHERE id = ${userId}
     `;
     res.json(rows[0] ?? null);

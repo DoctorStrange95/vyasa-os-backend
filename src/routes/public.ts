@@ -44,6 +44,7 @@ router.get('/doctor/:slug', async (req: Request, res: Response) => {
              u.bio, u.languages, u.accepting_patients, u.gbp_url,
              u.years_experience, u.consultation_fee, u.profile_slug,
              u.public_profile_enabled, u.profile_photo_url, u.clinic_id,
+             u.education, u.services, u.awards,
              p.doctor_name, p.clinic_name, p.address, p.phone, p.email, p.timings
       FROM users u
       LEFT JOIN pad_settings p ON p.user_id = u.id
@@ -83,6 +84,9 @@ router.get('/doctor/:slug', async (req: Request, res: Response) => {
       consultationFee: r.consultation_fee || null,
       profileSlug: r.profile_slug,
       profilePhotoUrl: r.profile_photo_url || '',
+      education: r.education || '',
+      services: r.services || '',
+      awards: r.awards || '',
       // Primary clinic (from pad_settings for display)
       clinicName: r.clinic_name || '',
       clinicAddress: r.address || '',
