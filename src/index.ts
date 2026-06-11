@@ -223,7 +223,7 @@ app.patch('/auth/me/public-profile', requireAuth, async (req, res) => {
   const {
     bio, languages, accepting_patients, public_profile_enabled,
     gbp_url, years_experience, consultation_fee, profile_photo_url,
-    education, services, awards,
+    education, services, awards, state, city,
   } = req.body as Record<string, unknown>;
   try {
     const ap  = accepting_patients   != null ? Boolean(accepting_patients)   : null;
@@ -242,11 +242,13 @@ app.patch('/auth/me/public-profile', requireAuth, async (req, res) => {
         profile_photo_url      = COALESCE(${(profile_photo_url ?? null) as string | null}::text, profile_photo_url),
         education              = COALESCE(${(education      ?? null) as string | null}::text,    education),
         services               = COALESCE(${(services       ?? null) as string | null}::text,    services),
-        awards                 = COALESCE(${(awards         ?? null) as string | null}::text,    awards)
+        awards                 = COALESCE(${(awards         ?? null) as string | null}::text,    awards),
+        state                  = COALESCE(${(state          ?? null) as string | null}::text,    state),
+        city                   = COALESCE(${(city           ?? null) as string | null}::text,    city)
       WHERE id = ${userId}
       RETURNING profile_slug, accepting_patients, public_profile_enabled, bio,
                 gbp_url, languages, years_experience, consultation_fee, profile_photo_url,
-                education, services, awards
+                education, services, awards, state, city
     `;
     res.json(rows[0] ?? {});
   } catch (e: any) {
@@ -261,7 +263,7 @@ app.get('/auth/me/public-profile', requireAuth, async (req, res) => {
     const rows = await sql`
       SELECT profile_slug, accepting_patients, public_profile_enabled, bio,
              gbp_url, languages, years_experience, consultation_fee, profile_photo_url,
-             education, services, awards
+             education, services, awards, state, city
       FROM users WHERE id = ${userId}
     `;
     res.json(rows[0] ?? null);
