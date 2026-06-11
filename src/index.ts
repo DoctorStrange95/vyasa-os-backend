@@ -30,6 +30,8 @@ const server = http.createServer(app);
 
 const ALLOWED_ORIGINS = [
   process.env.CLIENT_ORIGIN ?? 'https://vyasa-health-os.pages.dev',
+  'https://vyasaa.com',
+  'https://www.vyasaa.com',
   'http://localhost:5173',
   'http://localhost:3000',
 ];
@@ -223,22 +225,29 @@ app.patch('/auth/me/public-profile', requireAuth, async (req, res) => {
     gbp_url, years_experience, consultation_fee, profile_photo_url,
   } = req.body as Record<string, unknown>;
   try {
+    const ap  = accepting_patients   != null ? Boolean(accepting_patients)   : null;
+    const ppe = public_profile_enabled != null ? Boolean(public_profile_enabled) : null;
+    const ye  = years_experience      != null ? Math.round(Number(years_experience)) : null;
+    const cf  = consultation_fee      != null ? Math.round(Number(consultation_fee)) : null;
     const rows = await sql`
       UPDATE users SET
-        bio                  = COALESCE(${bio            ?? null}, bio),
-        languages            = COALESCE(${languages      ?? null}, languages),
-        accepting_patients   = COALESCE(${accepting_patients   ?? null}, accepting_patients),
-        public_profile_enabled = COALESCE(${public_profile_enabled ?? null}, public_profile_enabled),
-        gbp_url              = COALESCE(${gbp_url        ?? null}, gbp_url),
-        years_experience     = COALESCE(${years_experience ?? null}, years_experience),
-        consultation_fee     = COALESCE(${consultation_fee ?? null}, consultation_fee),
-        profile_photo_url    = COALESCE(${profile_photo_url ?? null}, profile_photo_url)
+        bio                    = COALESCE(${(bio            ?? null) as string | null}::text,    bio),
+        languages              = COALESCE(${(languages      ?? null) as string | null}::text,    languages),
+        accepting_patients     = COALESCE(${ap}::boolean,   accepting_patients),
+        public_profile_enabled = COALESCE(${ppe}::boolean,  public_profile_enabled),
+        gbp_url                = COALESCE(${(gbp_url        ?? null) as string | null}::text,    gbp_url),
+        years_experience       = COALESCE(${ye}::integer,   years_experience),
+        consultation_fee       = COALESCE(${cf}::integer,   consultation_fee),
+        profile_photo_url      = COALESCE(${(profile_photo_url ?? null) as string | null}::text, profile_photo_url)
       WHERE id = ${userId}
       RETURNING profile_slug, accepting_patients, public_profile_enabled, bio,
                 gbp_url, languages, years_experience, consultation_fee, profile_photo_url
     `;
     res.json(rows[0] ?? {});
-  } catch (e: any) { res.status(500).json({ error: e.message }); }
+  } catch (e: any) {
+    console.error('[public-profile PATCH]', e);
+    res.status(500).json({ error: e.message ?? 'Database error' });
+  }
 });
 
 app.get('/auth/me/public-profile', requireAuth, async (req, res) => {
