@@ -59,6 +59,17 @@ router.patch('/:id', async (req: Request, res: Response) => {
   res.json(row);
 });
 
+// ─── Delete clinic ────────────────────────────────────────────────────────────
+
+router.delete('/:id', async (req: Request, res: Response) => {
+  const [row] = await sql`
+    DELETE FROM clinics WHERE id = ${req.params.id} AND owner_id = ${req.user!.userId}
+    RETURNING id
+  `;
+  if (!row) { res.status(404).json({ error: 'Clinic not found' }); return; }
+  res.status(204).end();
+});
+
 // ─── Get pad settings ─────────────────────────────────────────────────────────
 
 router.get('/pad', async (req: Request, res: Response) => {

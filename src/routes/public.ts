@@ -55,20 +55,22 @@ router.get('/doctor/:slug', async (req: Request, res: Response) => {
     if (!rows.length) { res.status(404).json({ error: 'Doctor not found' }); return; }
     const r = rows[0];
 
-    // Fetch ALL clinics this doctor is associated with
+    // Fetch ALL clinics this doctor is associated with:
+    // primary clinic_id, clinics they own, and clinics they were invited to
     const clinicIds: string[] = [];
     if (r.clinic_id) clinicIds.push(r.clinic_id as string);
 
-    // Also check invited_clinic_ids (staff working in multiple clinics)
     const staffRows = await sql`SELECT invited_clinic_ids FROM users WHERE id = ${r.id}`;
     if (staffRows[0]?.invited_clinic_ids) {
       const extra = (staffRows[0].invited_clinic_ids as string).split(',').map((s: string) => s.trim()).filter(Boolean);
       for (const cid of extra) if (!clinicIds.includes(cid)) clinicIds.push(cid);
     }
 
-    const clinics = clinicIds.length
-      ? await sql`SELECT id, name, address, phone, timings, schedule FROM clinics WHERE id = ANY(${clinicIds})`
-      : [];
+    const clinics = await sql`
+      SELECT DISTINCT id, name, address, phone, timings, schedule
+      FROM clinics
+      WHERE id = ANY(${clinicIds.length ? clinicIds : ['__none__']}) OR owner_id = ${r.id}
+    `;
 
     res.json({
       id: r.id,
@@ -125,12 +127,32 @@ router.get('/doctor/:slug/slots', async (req: Request, res: Response) => {
     const doctorId = doctors[0].id as number;
     const clinicId = doctors[0].clinic_id as string | null;
 
-    // Fetch clinic schedule (JSONB) + max patients per day
-    const clinicRows = clinicId
-      ? await sql`SELECT schedule, max_patients FROM clinics WHERE id = ${clinicId}`
-      : [];
-    const schedule: DaySchedule[] = (clinicRows[0]?.schedule as DaySchedule[]) ?? [];
-    const globalCap = (clinicRows[0]?.max_patients as number) ?? 20;
+    // Fetch schedules from ALL the doctor's clinics (primary + owned) and merge
+    const clinicRows = await sql`
+      SELECT schedule, max_patients FROM clinics
+      WHERE id = ${clinicId ?? '__none__'} OR owner_id = ${doctorId}
+    `;
+    // Merge per-day: a day is open if ANY clinic is open; sessions are unioned
+    const schedule: DaySchedule[] = [];
+    for (let day = 0; day < 7; day++) {
+      const merged: DaySchedule = { day, open: false, sessions: [], maxPatients: 0 };
+      for (const row of clinicRows) {
+        const cs = (row.schedule as DaySchedule[]) ?? [];
+        const ds = cs.find(s => s.day === day);
+        if (ds?.open && ds.sessions?.length) {
+          merged.open = true;
+          for (const sess of ds.sessions) {
+            if (!merged.sessions.some(s => s.start === sess.start && s.end === sess.end)) {
+              merged.sessions.push(sess);
+            }
+          }
+          merged.maxPatients += ds.maxPatients ?? (row.max_patients as number) ?? 20;
+        }
+      }
+      merged.sessions.sort((a, b) => a.start.localeCompare(b.start));
+      if (merged.open) schedule.push(merged);
+    }
+    const globalCap = clinicRows.reduce((acc, r) => acc + ((r.max_patients as number) ?? 20), 0) || 20;
 
     // Dates we'll generate slots for
     const targetDates = Array.from({ length: days }, (_, i) => dateStr(i === 0 ? 1 : i)); // start tomorrow
