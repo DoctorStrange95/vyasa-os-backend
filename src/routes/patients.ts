@@ -74,6 +74,16 @@ router.post('/', async (req: Request, res: Response) => {
   const clinicId = req.user!.clinicId;
   const d = req.body;
 
+  // Minimal validation: id + name are NOT NULL in the schema; age must be numeric
+  if (typeof d.id !== 'string' || !d.id.trim() || typeof d.name !== 'string' || !d.name.trim()) {
+    res.status(400).json({ error: 'Patient id and name are required' });
+    return;
+  }
+  if (d.age != null && Number.isNaN(Number(d.age))) {
+    res.status(400).json({ error: 'Age must be a number' });
+    return;
+  }
+
   const encName = maybeEncrypt(d.name);
   const encPhone = maybeEncrypt(d.phone ?? null);
   const encDiagnosis = maybeEncrypt(d.diagnosis ?? null);

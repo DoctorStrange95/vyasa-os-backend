@@ -39,7 +39,15 @@ export function decrypt(ciphertext: string): string {
   }
 }
 
-// Encrypt only if encryption key is configured; skip silently in dev without key
+// Encrypt only if encryption key is configured. In production a missing key
+// means PII would be stored in plaintext — warn loudly once at startup.
+if (!process.env.ENCRYPTION_KEY && process.env.NODE_ENV === 'production') {
+  console.warn(
+    '⚠️  ENCRYPTION_KEY is not set in production — patient PII (names, phones, diagnoses) ' +
+    'will be stored UNENCRYPTED. Set a 32-byte hex ENCRYPTION_KEY env var.'
+  );
+}
+
 export function maybeEncrypt(value: string | null | undefined): string | null {
   if (value == null || value === '') return value ?? null;
   if (!process.env.ENCRYPTION_KEY) return value;

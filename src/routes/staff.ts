@@ -7,10 +7,13 @@ const router = Router();
 router.use(requireAuth);
 
 // GET /staff/pending
-// Returns ALL pending non-admin users for any clinic_admin or doctor.
-// For MVP (single-practice), showing all pending is correct — the doctor
-// approves whoever used their invite link. Multi-tenant scoping comes later.
+// Returns pending staff who were invited to one of THIS doctor's clinics.
+// (Staff with no invited_clinic_ids at all are also shown so legacy invites
+// aren't lost — but staff invited to someone else's clinic are hidden.)
 router.get('/pending', async (req: Request, res: Response) => {
+  const clinics = await sql`SELECT id FROM clinics WHERE owner_id = ${req.user!.userId}`;
+  const myClinicIds = clinics.map(c => c.id as string);
+
   const pending = await sql`
     SELECT id, name, email, phone, role, degrees, specialty,
            invited_clinic_ids, invited_clinic_name, created_at
@@ -19,14 +22,19 @@ router.get('/pending', async (req: Request, res: Response) => {
       AND role NOT IN ('clinic_admin', 'superadmin', 'patient')
     ORDER BY created_at DESC
   `;
-  res.json(pending);
+  const scoped = pending.filter(p => {
+    const invited = (p.invited_clinic_ids as string | null)?.split(',').map(s => s.trim()).filter(Boolean) ?? [];
+    if (invited.length === 0) return true; // legacy registration with no invite metadata
+    return invited.some(id => myClinicIds.includes(id));
+  });
+  res.json(scoped);
 });
 
 // GET /staff/active — returns approved staff belonging to the doctor's clinics
 router.get('/active', async (req: Request, res: Response) => {
   const user = req.user!;
   const clinics = await sql`SELECT id FROM clinics WHERE owner_id = ${user.userId}`;
-  const clinicIds = clinics.map((c: any) => c.id as string);
+  const clinicIds = clinics.map(c => c.id as string);
 
   if (clinicIds.length === 0) {
     res.json([]);
@@ -52,7 +60,7 @@ router.post('/:id/approve', async (req: Request, res: Response) => {
   const targetId = Number(req.params.id);
 
   const clinics = await sql`SELECT id FROM clinics WHERE owner_id = ${user.userId}`;
-  const clinicIds = clinics.map((c: any) => c.id as string);
+  const clinicIds = clinics.map(c => c.id as string);
 
   if (clinicIds.length === 0) {
     res.status(403).json({ error: 'No clinics found' });
@@ -66,13 +74,17 @@ router.post('/:id/approve', async (req: Request, res: Response) => {
     return;
   }
 
-  const invitedIds = (target.invited_clinic_ids as string | null)?.split(',').map(s => s.trim()) ?? [];
+  const invitedIds = (target.invited_clinic_ids as string | null)?.split(',').map(s => s.trim()).filter(Boolean) ?? [];
   const matchedClinic = clinicIds.find(id => invitedIds.includes(id));
 
-  if (!matchedClinic && clinicIds.length > 0) {
-    // Fallback: assign to doctor's first clinic if no match (edge case for old registrations)
+  // If they were explicitly invited to a different doctor's clinic, refuse —
+  // silently absorbing someone else's staff would be wrong.
+  if (!matchedClinic && invitedIds.length > 0) {
+    res.status(403).json({ error: 'This staff member was invited to a different clinic.' });
+    return;
   }
 
+  // Legacy registrations with no invite metadata: assign to this doctor's first clinic
   const assignClinic = matchedClinic ?? clinicIds[0];
 
   await sql`
@@ -106,7 +118,7 @@ router.delete('/:id', async (req: Request, res: Response) => {
   const targetId = Number(req.params.id);
 
   const clinics = await sql`SELECT id FROM clinics WHERE owner_id = ${user.userId}`;
-  const clinicIds = clinics.map((c: any) => c.id as string);
+  const clinicIds = clinics.map(c => c.id as string);
 
   // Only remove staff who belong to this doctor's clinic
   await sql`

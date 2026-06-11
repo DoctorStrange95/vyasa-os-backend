@@ -1,8 +1,10 @@
 import 'dotenv/config';
+import 'express-async-errors'; // patches Express 4 so thrown async errors reach the error middleware
 import express from 'express';
 import http from 'http';
 import cors from 'cors';
 import helmet from 'helmet';
+import rateLimit from 'express-rate-limit';
 import morgan from 'morgan';
 import { Server as SocketIO } from 'socket.io';
 import jwt from 'jsonwebtoken';
@@ -53,6 +55,18 @@ app.use(helmet({ contentSecurityPolicy: false }));
 app.use(morgan(process.env.NODE_ENV === 'production' ? 'combined' : 'dev'));
 app.use(express.json({ limit: '10mb' }));
 
+// Brute-force protection on credential endpoints (per-IP)
+const authLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  limit: 50,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Too many attempts. Please try again in a few minutes.' },
+});
+app.use('/auth/login', authLimiter);
+app.use('/auth/register', authLimiter);
+app.use('/auth/google', authLimiter);
+
 // ─── Socket.io ────────────────────────────────────────────────────────────────
 
 const io = new SocketIO(server, {
@@ -96,12 +110,18 @@ io.on('connection', socket => {
       senderId: user.userId, senderName: user.name, senderRole: user.role,
       message: data.message, type: data.type ?? 'message', time,
     };
-    // Persist to DB
-    await sql`
-      INSERT INTO chat_messages (id, patient_id, clinic_id, sender_id, sender_name, sender_role, message, type, time)
-      VALUES (${id}, ${data.patientId}, ${clinicId}, ${user.userId}, ${user.name}, ${user.role},
-              ${data.message}, ${data.type ?? 'message'}, ${time})
-    `;
+    // Persist to DB — never let a DB failure crash the socket or drop silently
+    try {
+      await sql`
+        INSERT INTO chat_messages (id, patient_id, clinic_id, sender_id, sender_name, sender_role, message, type, time)
+        VALUES (${id}, ${data.patientId}, ${clinicId}, ${user.userId}, ${user.name}, ${user.role},
+                ${data.message}, ${data.type ?? 'message'}, ${time})
+      `;
+    } catch (err) {
+      console.error('[chat_message persist failed]', err);
+      socket.emit('chat_error', { id, error: 'Message could not be saved. Please retry.' });
+      return;
+    }
     // Broadcast to everyone in the patient room
     io.to(`patient:${data.patientId}`).emit('chat_message', msg);
   });
@@ -301,6 +321,14 @@ app.patch('/booking-requests/:id', requireAuth, async (req, res) => {
     if (!rows.length) { res.status(404).json({ error: 'Not found' }); return; }
     res.json(rows[0]);
   } catch (e: any) { res.status(500).json({ error: e.message }); }
+});
+
+// ─── Global error handler (catches sync + async route errors) ────────────────
+
+app.use((err: Error, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
+  console.error('[unhandled route error]', err);
+  if (res.headersSent) return;
+  res.status(500).json({ error: 'Internal server error' });
 });
 
 // ─── Boot ─────────────────────────────────────────────────────────────────────

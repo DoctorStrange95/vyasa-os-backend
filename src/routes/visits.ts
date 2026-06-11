@@ -13,14 +13,15 @@ router.get('/patient/:patientId', async (req: Request, res: Response) => {
     WHERE patient_id = ${req.params.patientId} AND clinic_id = ${req.user!.clinicId}
     ORDER BY date DESC, created_at DESC
   `;
-  // Merge `data` JSONB fields into the row for compatibility with frontend
+  // Merge `data` JSONB fields into the row for compatibility with frontend.
+  // Spread FIRST so a stray id/date key inside the blob can't clobber real columns.
   const result = visits.map(v => ({
+    ...((v.data as Record<string, unknown>) ?? {}),
     id: v.id,
     patientId: v.patient_id,
     date: v.date,
     doctorName: v.doctor_name,
     doctorId: v.doctor_id,
-    ...((v.data as Record<string, unknown>) ?? {}),
   }));
   res.json(result);
 });
@@ -55,11 +56,11 @@ router.post('/', async (req: Request, res: Response) => {
     RETURNING *
   `;
   res.status(201).json({
+    ...((visit.data as Record<string, unknown>) ?? {}),
     id: visit.id,
     patientId: visit.patient_id,
     date: visit.date,
     doctorName: visit.doctor_name,
-    ...((visit.data as Record<string, unknown>) ?? {}),
   });
 });
 
