@@ -328,6 +328,9 @@ export async function runMigrations() {
   await sql`CREATE INDEX IF NOT EXISTS idx_booking_requests_doctor ON booking_requests(doctor_id)`;
   await sql`CREATE INDEX IF NOT EXISTS idx_booking_requests_status ON booking_requests(doctor_id, status)`;
 
+  // Doctor public profile photo
+  await sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS profile_photo_url TEXT`;
+
   // Backfill reg_number from license_number for users who registered via the MCI/CI field
   await sql`
     UPDATE users SET reg_number = license_number

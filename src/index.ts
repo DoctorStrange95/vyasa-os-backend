@@ -218,16 +218,26 @@ import { requireAuth } from './middleware/auth';
 
 app.patch('/auth/me/public-profile', requireAuth, async (req, res) => {
   const userId = req.user!.userId;
-  const allowed = ['bio', 'languages', 'accepting_patients', 'public_profile_enabled',
-                   'gbp_url', 'years_experience', 'consultation_fee'];
-  const fields: string[] = [], vals: unknown[] = [];
-  for (const k of allowed) {
-    if (req.body[k] !== undefined) { fields.push(`${k} = $${fields.length + 2}`); vals.push(req.body[k]); }
-  }
-  if (!fields.length) { res.status(400).json({ error: 'Nothing to update' }); return; }
+  const {
+    bio, languages, accepting_patients, public_profile_enabled,
+    gbp_url, years_experience, consultation_fee, profile_photo_url,
+  } = req.body as Record<string, unknown>;
   try {
-    const rows = await sql(`UPDATE users SET ${fields.join(', ')} WHERE id = $1 RETURNING profile_slug, accepting_patients, public_profile_enabled, bio, gbp_url, languages, years_experience, consultation_fee`, [userId, ...vals]);
-    res.json(rows[0]);
+    const rows = await sql`
+      UPDATE users SET
+        bio                  = COALESCE(${bio            ?? null}, bio),
+        languages            = COALESCE(${languages      ?? null}, languages),
+        accepting_patients   = COALESCE(${accepting_patients   ?? null}, accepting_patients),
+        public_profile_enabled = COALESCE(${public_profile_enabled ?? null}, public_profile_enabled),
+        gbp_url              = COALESCE(${gbp_url        ?? null}, gbp_url),
+        years_experience     = COALESCE(${years_experience ?? null}, years_experience),
+        consultation_fee     = COALESCE(${consultation_fee ?? null}, consultation_fee),
+        profile_photo_url    = COALESCE(${profile_photo_url ?? null}, profile_photo_url)
+      WHERE id = ${userId}
+      RETURNING profile_slug, accepting_patients, public_profile_enabled, bio,
+                gbp_url, languages, years_experience, consultation_fee, profile_photo_url
+    `;
+    res.json(rows[0] ?? {});
   } catch (e: any) { res.status(500).json({ error: e.message }); }
 });
 
@@ -236,7 +246,7 @@ app.get('/auth/me/public-profile', requireAuth, async (req, res) => {
   try {
     const rows = await sql`
       SELECT profile_slug, accepting_patients, public_profile_enabled, bio,
-             gbp_url, languages, years_experience, consultation_fee
+             gbp_url, languages, years_experience, consultation_fee, profile_photo_url
       FROM users WHERE id = ${userId}
     `;
     res.json(rows[0] ?? null);
