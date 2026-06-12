@@ -436,4 +436,28 @@ router.get('/doctors', async (req: Request, res: Response) => {
   }
 });
 
+// ─── GET /public/sitemap.xml — all public doctor profiles for search engines ─
+const APP_ORIGIN = 'https://app.vyasaa.com';
+
+router.get('/sitemap.xml', async (_req: Request, res: Response) => {
+  try {
+    const rows = await sql`
+      SELECT profile_slug FROM users
+      WHERE public_profile_enabled = true
+        AND approval_status = 'approved'
+        AND profile_slug IS NOT NULL AND profile_slug != ''
+      ORDER BY profile_slug
+    `;
+    const urls = rows
+      .map(r => `  <url>\n    <loc>${APP_ORIGIN}/dr/${encodeURIComponent(r.profile_slug as string)}</loc>\n    <changefreq>weekly</changefreq>\n    <priority>0.8</priority>\n  </url>`)
+      .join('\n');
+    const xml = `<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n${urls}\n</urlset>\n`;
+    res.set('Content-Type', 'application/xml; charset=utf-8');
+    res.set('Cache-Control', 'public, max-age=3600');
+    res.send(xml);
+  } catch (e: any) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 export default router;
