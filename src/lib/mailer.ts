@@ -1,12 +1,16 @@
 import nodemailer from 'nodemailer';
 
-// SMTP config via env. Works with Gmail (app password), Resend SMTP, Brevo, etc.
-//   SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS, SMTP_FROM
-// If unconfigured, emails are skipped with a console warning (app keeps working).
+// Email transport, in order of preference:
+//   1. BREVO_API_KEY — Brevo HTTP API over port 443. REQUIRED on Render free
+//      tier, which blocks ALL outbound SMTP ports (25/465/587).
+//   2. SMTP_HOST/PORT/USER/PASS — classic SMTP (works on hosts without the block)
+// SMTP_FROM is used by both, e.g. 'Vyasa Health <support@vyasaa.com>'.
+// If neither is configured, emails are skipped with a console warning.
 
-const configured = Boolean(process.env.SMTP_HOST && process.env.SMTP_USER && process.env.SMTP_PASS);
+const BREVO_KEY = process.env.BREVO_API_KEY;
+const smtpConfigured = Boolean(process.env.SMTP_HOST && process.env.SMTP_USER && process.env.SMTP_PASS);
 
-const transporter = configured
+const transporter = !BREVO_KEY && smtpConfigured
   ? nodemailer.createTransport({
       host: process.env.SMTP_HOST,
       port: Number(process.env.SMTP_PORT ?? 587),
@@ -19,18 +23,31 @@ const transporter = configured
     })
   : null;
 
-// Verify SMTP credentials once at boot so misconfiguration is obvious in logs
-if (transporter) {
+if (BREVO_KEY) {
+  console.log('✉️  Mailer ready: Brevo HTTP API (port 443)');
+} else if (transporter) {
   transporter.verify()
     .then(() => console.log(`✉️  SMTP ready (${process.env.SMTP_HOST} as ${process.env.SMTP_USER})`))
     .catch(err => console.error(`✉️  SMTP VERIFY FAILED (${process.env.SMTP_HOST}): ${err.message}`));
-}
-
-if (!configured) {
-  console.warn('✉️  SMTP_* env vars not set — transactional emails are disabled.');
+} else {
+  console.warn('✉️  No BREVO_API_KEY or SMTP_* env vars — transactional emails are disabled.');
 }
 
 const FROM = process.env.SMTP_FROM ?? 'Vyasa Health <no-reply@vyasaa.com>';
+
+function parseFrom(): { name?: string; email: string } {
+  const m = FROM.match(/^(.*)<(.+)>\s*$/);
+  return m ? { name: m[1].trim().replace(/^"|"$/g, ''), email: m[2].trim() } : { email: FROM.trim() };
+}
+
+async function sendViaBrevoApi(to: string, subject: string, html: string): Promise<void> {
+  const res = await fetch('https://api.brevo.com/v3/smtp/email', {
+    method: 'POST',
+    headers: { 'api-key': BREVO_KEY!, 'content-type': 'application/json', accept: 'application/json' },
+    body: JSON.stringify({ sender: parseFrom(), to: [{ email: to }], subject, htmlContent: html }),
+  });
+  if (!res.ok) throw new Error(`Brevo API ${res.status}: ${await res.text()}`);
+}
 const TEAL = '#0d9488';
 const NAVY = '#0f2040';
 
@@ -56,10 +73,13 @@ function layout(title: string, body: string): string {
 
 // Fire-and-forget — never block or fail a request because of email
 export function sendMail(to: string, subject: string, html: string): void {
-  if (!transporter) { console.warn(`✉️  skipped (SMTP unconfigured): "${subject}" → ${to}`); return; }
+  if (!BREVO_KEY && !transporter) { console.warn(`✉️  skipped (mailer unconfigured): "${subject}" → ${to}`); return; }
   if (!to) { console.warn(`✉️  skipped (no recipient): "${subject}"`); return; }
   console.log(`✉️  sending "${subject}" → ${to}…`);
-  transporter.sendMail({ from: FROM, to, subject, html })
+  const send = BREVO_KEY
+    ? sendViaBrevoApi(to, subject, html)
+    : transporter!.sendMail({ from: FROM, to, subject, html }).then(() => undefined);
+  send
     .then(() => console.log(`✉️  sent "${subject}" → ${to}`))
     .catch(err => console.error(`✉️  FAILED "${subject}" → ${to}:`, err.message));
 }
