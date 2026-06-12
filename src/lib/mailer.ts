@@ -12,8 +12,19 @@ const transporter = configured
       port: Number(process.env.SMTP_PORT ?? 587),
       secure: Number(process.env.SMTP_PORT) === 465,
       auth: { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS },
+      // Fail fast instead of hanging silently when the SMTP host is unreachable
+      connectionTimeout: 15_000,
+      greetingTimeout: 15_000,
+      socketTimeout: 30_000,
     })
   : null;
+
+// Verify SMTP credentials once at boot so misconfiguration is obvious in logs
+if (transporter) {
+  transporter.verify()
+    .then(() => console.log(`✉️  SMTP ready (${process.env.SMTP_HOST} as ${process.env.SMTP_USER})`))
+    .catch(err => console.error(`✉️  SMTP VERIFY FAILED (${process.env.SMTP_HOST}): ${err.message}`));
+}
 
 if (!configured) {
   console.warn('✉️  SMTP_* env vars not set — transactional emails are disabled.');
@@ -45,7 +56,9 @@ function layout(title: string, body: string): string {
 
 // Fire-and-forget — never block or fail a request because of email
 export function sendMail(to: string, subject: string, html: string): void {
-  if (!transporter || !to) return;
+  if (!transporter) { console.warn(`✉️  skipped (SMTP unconfigured): "${subject}" → ${to}`); return; }
+  if (!to) { console.warn(`✉️  skipped (no recipient): "${subject}"`); return; }
+  console.log(`✉️  sending "${subject}" → ${to}…`);
   transporter.sendMail({ from: FROM, to, subject, html })
     .then(() => console.log(`✉️  sent "${subject}" → ${to}`))
     .catch(err => console.error(`✉️  FAILED "${subject}" → ${to}:`, err.message));
