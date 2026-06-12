@@ -32,6 +32,7 @@ const server = http.createServer(app);
 
 const ALLOWED_ORIGINS = [
   process.env.CLIENT_ORIGIN ?? 'https://vyasa-health-os.pages.dev',
+  'https://app.vyasaa.com',
   'https://vyasaa.com',
   'https://www.vyasaa.com',
   'http://localhost:5173',
