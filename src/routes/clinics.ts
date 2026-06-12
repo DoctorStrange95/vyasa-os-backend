@@ -15,6 +15,9 @@ router.get('/', async (req: Request, res: Response) => {
     fee: Number(r.fee), maxPatients: r.max_patients, timings: r.timings,
     schedule: r.schedule, color: r.color,
     beds: r.beds ?? [],
+    state: r.state ?? '', city: r.city ?? '', pincode: r.pincode ?? '',
+    lat: r.lat != null ? Number(r.lat) : undefined,
+    lng: r.lng != null ? Number(r.lng) : undefined,
   })));
 });
 
@@ -23,15 +26,20 @@ router.get('/', async (req: Request, res: Response) => {
 router.post('/', async (req: Request, res: Response) => {
   const d = req.body;
   const [row] = await sql`
-    INSERT INTO clinics (id, owner_id, name, address, phone, fee, max_patients, timings, schedule, color, beds)
+    INSERT INTO clinics (id, owner_id, name, address, phone, fee, max_patients, timings, schedule, color, beds,
+                         state, city, pincode, lat, lng)
     VALUES (${d.id}, ${req.user!.userId}, ${d.name}, ${d.address ?? ''}, ${d.phone ?? ''},
             ${d.fee ?? 200}, ${d.maxPatients ?? 30}, ${d.timings ?? ''},
             ${JSON.stringify(d.schedule ?? [])}, ${d.color ?? '#0d9488'},
-            ${JSON.stringify(d.beds ?? [])})
+            ${JSON.stringify(d.beds ?? [])},
+            ${d.state ?? ''}, ${d.city ?? ''}, ${d.pincode ?? ''},
+            ${d.lat != null ? Number(d.lat) : null}, ${d.lng != null ? Number(d.lng) : null})
     ON CONFLICT (id) DO UPDATE SET
       name = EXCLUDED.name, address = EXCLUDED.address, phone = EXCLUDED.phone,
       fee = EXCLUDED.fee, max_patients = EXCLUDED.max_patients, timings = EXCLUDED.timings,
-      schedule = EXCLUDED.schedule, color = EXCLUDED.color, beds = EXCLUDED.beds
+      schedule = EXCLUDED.schedule, color = EXCLUDED.color, beds = EXCLUDED.beds,
+      state = EXCLUDED.state, city = EXCLUDED.city, pincode = EXCLUDED.pincode,
+      lat = EXCLUDED.lat, lng = EXCLUDED.lng
     RETURNING *
   `;
   res.status(201).json(row);

@@ -67,7 +67,8 @@ router.get('/doctor/:slug', async (req: Request, res: Response) => {
     }
 
     const clinics = await sql`
-      SELECT DISTINCT id, name, address, phone, timings, schedule
+      SELECT DISTINCT id, name, address, phone, timings, schedule,
+                      state, city, pincode, lat, lng
       FROM clinics
       WHERE id = ANY(${clinicIds.length ? clinicIds : ['__none__']}) OR owner_id = ${r.id}
     `;
@@ -102,6 +103,12 @@ router.get('/doctor/:slug', async (req: Request, res: Response) => {
         address: c.address || '',
         phone: c.phone || '',
         timings: c.timings || '',
+        state: c.state || '',
+        city: c.city || '',
+        pincode: c.pincode || '',
+        lat: c.lat != null ? Number(c.lat) : null,
+        lng: c.lng != null ? Number(c.lng) : null,
+        hasSchedule: Array.isArray(c.schedule) && (c.schedule as { open?: boolean }[]).some(d => d.open),
       })),
     });
   } catch (e: any) {
@@ -115,6 +122,7 @@ router.get('/doctor/:slug/slots', async (req: Request, res: Response) => {
   const { slug } = req.params;
   const days = Math.min(Number(req.query.days ?? 14), 30);
   const interval = Number(req.query.interval ?? 15); // slot duration in minutes
+  const requestedClinic = (req.query.clinic_id as string | undefined)?.trim() || null;
 
   try {
     const doctors = await sql`
@@ -127,11 +135,22 @@ router.get('/doctor/:slug/slots', async (req: Request, res: Response) => {
     const doctorId = doctors[0].id as number;
     const clinicId = doctors[0].clinic_id as string | null;
 
-    // Fetch schedules from ALL the doctor's clinics (primary + owned) and merge
-    const clinicRows = await sql`
-      SELECT schedule, max_patients FROM clinics
-      WHERE id = ${clinicId ?? '__none__'} OR owner_id = ${doctorId}
-    `;
+    // With ?clinic_id= use only that chamber's schedule; otherwise merge all.
+    // (Either way, booked-slot conflicts are checked per DOCTOR — they can't
+    // be in two chambers at the same time.)
+    const clinicRows = requestedClinic
+      ? await sql`
+          SELECT schedule, max_patients FROM clinics
+          WHERE id = ${requestedClinic}
+            AND (id = ${clinicId ?? '__none__'} OR owner_id = ${doctorId})
+        `
+      : await sql`
+          SELECT schedule, max_patients FROM clinics
+          WHERE id = ${clinicId ?? '__none__'} OR owner_id = ${doctorId}
+        `;
+    if (requestedClinic && !clinicRows.length) {
+      res.status(404).json({ error: 'Clinic not found for this doctor' }); return;
+    }
     // Merge per-day: a day is open if ANY clinic is open; sessions are unioned
     const schedule: DaySchedule[] = [];
     for (let day = 0; day < 7; day++) {
@@ -154,8 +173,8 @@ router.get('/doctor/:slug/slots', async (req: Request, res: Response) => {
     }
     const globalCap = clinicRows.reduce((acc, r) => acc + ((r.max_patients as number) ?? 20), 0) || 20;
 
-    // Dates we'll generate slots for
-    const targetDates = Array.from({ length: days }, (_, i) => dateStr(i === 0 ? 1 : i)); // start tomorrow
+    // Dates we'll generate slots for — start tomorrow, one entry per day
+    const targetDates = Array.from({ length: days }, (_, i) => dateStr(i + 1));
 
     // Fetch already-booked slots in that range (booking_requests + appointments)
     const fromDate = targetDates[0];
@@ -228,7 +247,7 @@ router.get('/doctor/:slug/slots', async (req: Request, res: Response) => {
 // ─── POST /public/doctor/:slug/book ──────────────────────────────────────────
 router.post('/doctor/:slug/book', async (req: Request, res: Response) => {
   const { slug } = req.params;
-  const { patient_name, patient_phone, patient_age, reason, preferred_date, preferred_time } = req.body;
+  const { patient_name, patient_phone, patient_age, reason, preferred_date, preferred_time, clinic_id } = req.body;
 
   if (!patient_name?.trim() || !patient_phone?.trim()) {
     res.status(400).json({ error: 'Name and phone are required' }); return;
@@ -258,11 +277,22 @@ router.post('/doctor/:slug/book', async (req: Request, res: Response) => {
       return;
     }
 
+    // Validate the chosen chamber belongs to this doctor (ignore if not)
+    let bookClinic: string | null = null;
+    if (clinic_id) {
+      const owned = await sql`
+        SELECT c.id FROM clinics c
+        JOIN users u ON u.id = ${doctorId}
+        WHERE c.id = ${clinic_id} AND (c.owner_id = ${doctorId} OR c.id = u.clinic_id)
+      `;
+      if (owned.length) bookClinic = clinic_id as string;
+    }
+
     const [row] = await sql`
       INSERT INTO booking_requests
-        (doctor_id, patient_name, patient_phone, patient_age, reason, preferred_date, preferred_time)
+        (doctor_id, clinic_id, patient_name, patient_phone, patient_age, reason, preferred_date, preferred_time)
       VALUES
-        (${doctorId}, ${patient_name.trim()}, ${patient_phone.replace(/\D/g, '').slice(-10)},
+        (${doctorId}, ${bookClinic}, ${patient_name.trim()}, ${patient_phone.replace(/\D/g, '').slice(-10)},
          ${patient_age ? Number(patient_age) : null}, ${reason?.trim() || ''},
          ${preferred_date}, ${preferred_time})
       RETURNING id, status, created_at

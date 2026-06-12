@@ -257,6 +257,13 @@ export async function runMigrations() {
   // Locality field for patients (area/neighbourhood)
   await sql`ALTER TABLE patients ADD COLUMN IF NOT EXISTS locality TEXT`;
 
+  // Clinic location fields — patients pick a chamber by location when booking
+  await sql`ALTER TABLE clinics ADD COLUMN IF NOT EXISTS state TEXT DEFAULT ''`;
+  await sql`ALTER TABLE clinics ADD COLUMN IF NOT EXISTS city TEXT DEFAULT ''`;
+  await sql`ALTER TABLE clinics ADD COLUMN IF NOT EXISTS pincode TEXT DEFAULT ''`;
+  await sql`ALTER TABLE clinics ADD COLUMN IF NOT EXISTS lat DOUBLE PRECISION`;
+  await sql`ALTER TABLE clinics ADD COLUMN IF NOT EXISTS lng DOUBLE PRECISION`;
+
   // Beds config per clinic (JSONB array of { id, number, ward, type })
   await sql`ALTER TABLE clinics ADD COLUMN IF NOT EXISTS beds JSONB DEFAULT '[]'`;
 

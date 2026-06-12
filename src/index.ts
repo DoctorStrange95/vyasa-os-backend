@@ -297,8 +297,16 @@ app.get('/booking-requests', requireAuth, async (req, res) => {
   const { status } = req.query;
   try {
     const rows = status
-      ? await sql`SELECT * FROM booking_requests WHERE doctor_id = ${userId} AND status = ${status as string} ORDER BY created_at DESC`
-      : await sql`SELECT * FROM booking_requests WHERE doctor_id = ${userId} ORDER BY created_at DESC LIMIT 200`;
+      ? await sql`
+          SELECT br.*, c.name AS clinic_name FROM booking_requests br
+          LEFT JOIN clinics c ON c.id = br.clinic_id
+          WHERE br.doctor_id = ${userId} AND br.status = ${status as string}
+          ORDER BY br.created_at DESC`
+      : await sql`
+          SELECT br.*, c.name AS clinic_name FROM booking_requests br
+          LEFT JOIN clinics c ON c.id = br.clinic_id
+          WHERE br.doctor_id = ${userId}
+          ORDER BY br.created_at DESC LIMIT 200`;
     res.json(rows);
   } catch (e: any) { res.status(500).json({ error: e.message }); }
 });
