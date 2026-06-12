@@ -1,6 +1,7 @@
 import { Router, Request, Response } from 'express';
 import { requireAuth } from '../middleware/auth';
 import sql from '../db';
+import { sendMail, approvalEmail } from '../lib/mailer';
 
 const router = Router();
 
@@ -47,7 +48,14 @@ router.get('/users/:id/sessions', async (req: Request, res: Response) => {
 // ─── Approve a user (allow full prescription access) ─────────────────────────
 
 router.post('/users/:id/approve', async (req: Request, res: Response) => {
-  await sql`UPDATE users SET approval_status = 'approved' WHERE id = ${req.params.id}`;
+  const [user] = await sql`
+    UPDATE users SET approval_status = 'approved' WHERE id = ${Number(req.params.id)}
+    RETURNING name, email, role
+  `;
+  if (user?.email && ['clinic_admin', 'doctor'].includes(user.role as string)) {
+    const mail = approvalEmail(user.name as string);
+    sendMail(user.email as string, mail.subject, mail.html);
+  }
   res.json({ ok: true });
 });
 

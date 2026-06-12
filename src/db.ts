@@ -338,6 +338,14 @@ export async function runMigrations() {
   // Doctor public profile photo
   await sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS profile_photo_url TEXT`;
 
+  // Patient email on bookings (for confirmation emails)
+  await sql`ALTER TABLE booking_requests ADD COLUMN IF NOT EXISTS patient_email TEXT DEFAULT ''`;
+
+  // Advance payment settings + payment QR (UPI) for doctors
+  await sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS advance_payment BOOLEAN DEFAULT false`;
+  await sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS advance_amount INTEGER`;
+  await sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS payment_qr_url TEXT`;
+
   // Doctor social-presence fields: education history, services offered, awards
   await sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS education TEXT DEFAULT ''`;
   await sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS services TEXT DEFAULT ''`;

@@ -1,5 +1,6 @@
 import { Router, Request, Response } from 'express';
 import sql from '../db';
+import { sendMail, newBookingDoctorEmail } from '../lib/mailer';
 
 const router = Router();
 
@@ -45,6 +46,7 @@ router.get('/doctor/:slug', async (req: Request, res: Response) => {
              u.years_experience, u.consultation_fee, u.profile_slug,
              u.public_profile_enabled, u.profile_photo_url, u.clinic_id,
              u.education, u.services, u.awards,
+             u.advance_payment, u.advance_amount, u.payment_qr_url,
              p.doctor_name, p.clinic_name, p.address, p.phone, p.email, p.timings
       FROM users u
       LEFT JOIN pad_settings p ON p.user_id = u.id
@@ -90,6 +92,10 @@ router.get('/doctor/:slug', async (req: Request, res: Response) => {
       education: r.education || '',
       services: r.services || '',
       awards: r.awards || '',
+      // Advance payment (QR shown to patients only when enabled with an amount)
+      advancePayment: r.advance_payment === true && Number(r.advance_amount) > 0,
+      advanceAmount: r.advance_payment === true ? (r.advance_amount ?? null) : null,
+      paymentQrUrl: r.advance_payment === true ? (r.payment_qr_url || '') : '',
       // Primary clinic (from pad_settings for display)
       clinicName: r.clinic_name || '',
       clinicAddress: r.address || '',
@@ -247,7 +253,7 @@ router.get('/doctor/:slug/slots', async (req: Request, res: Response) => {
 // ─── POST /public/doctor/:slug/book ──────────────────────────────────────────
 router.post('/doctor/:slug/book', async (req: Request, res: Response) => {
   const { slug } = req.params;
-  const { patient_name, patient_phone, patient_age, reason, preferred_date, preferred_time, clinic_id } = req.body;
+  const { patient_name, patient_phone, patient_email, patient_age, reason, preferred_date, preferred_time, clinic_id } = req.body;
 
   if (!patient_name?.trim() || !patient_phone?.trim()) {
     res.status(400).json({ error: 'Name and phone are required' }); return;
@@ -290,13 +296,35 @@ router.post('/doctor/:slug/book', async (req: Request, res: Response) => {
 
     const [row] = await sql`
       INSERT INTO booking_requests
-        (doctor_id, clinic_id, patient_name, patient_phone, patient_age, reason, preferred_date, preferred_time)
+        (doctor_id, clinic_id, patient_name, patient_phone, patient_email, patient_age, reason, preferred_date, preferred_time)
       VALUES
         (${doctorId}, ${bookClinic}, ${patient_name.trim()}, ${patient_phone.replace(/\D/g, '').slice(-10)},
+         ${(patient_email as string | undefined)?.trim() || ''},
          ${patient_age ? Number(patient_age) : null}, ${reason?.trim() || ''},
          ${preferred_date}, ${preferred_time})
       RETURNING id, status, created_at
     `;
+
+    // Notify the doctor by email (fire-and-forget)
+    try {
+      const [doc] = await sql`
+        SELECT u.name, u.email, c.name AS clinic_name
+        FROM users u LEFT JOIN clinics c ON c.id = ${bookClinic}
+        WHERE u.id = ${doctorId}
+      `;
+      if (doc?.email) {
+        const mail = newBookingDoctorEmail({
+          doctorName: doc.name as string,
+          patientName: patient_name.trim(),
+          patientPhone: patient_phone.replace(/\D/g, '').slice(-10),
+          date: preferred_date, time: preferred_time,
+          clinicName: (doc.clinic_name as string) || undefined,
+          reason: reason?.trim() || undefined,
+        });
+        sendMail(doc.email as string, mail.subject, mail.html);
+      }
+    } catch (e) { console.error('[booking email]', e); }
+
     res.status(201).json({ ok: true, id: row.id, status: row.status });
   } catch (e: any) {
     res.status(500).json({ error: e.message });

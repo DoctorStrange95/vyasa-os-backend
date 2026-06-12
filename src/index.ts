@@ -245,12 +245,15 @@ app.patch('/auth/me/public-profile', requireAuth, async (req, res) => {
     bio, languages, accepting_patients, public_profile_enabled,
     gbp_url, years_experience, consultation_fee, profile_photo_url,
     education, services, awards, state, city,
+    advance_payment, advance_amount, payment_qr_url,
   } = req.body as Record<string, unknown>;
   try {
     const ap  = accepting_patients   != null ? Boolean(accepting_patients)   : null;
     const ppe = public_profile_enabled != null ? Boolean(public_profile_enabled) : null;
     const ye  = years_experience      != null ? Math.round(Number(years_experience)) : null;
     const cf  = consultation_fee      != null ? Math.round(Number(consultation_fee)) : null;
+    const adv = advance_payment       != null ? Boolean(advance_payment) : null;
+    const adva = advance_amount       != null ? Math.round(Number(advance_amount)) : null;
     const rows = await sql`
       UPDATE users SET
         bio                    = COALESCE(${(bio            ?? null) as string | null}::text,    bio),
@@ -265,11 +268,15 @@ app.patch('/auth/me/public-profile', requireAuth, async (req, res) => {
         services               = COALESCE(${(services       ?? null) as string | null}::text,    services),
         awards                 = COALESCE(${(awards         ?? null) as string | null}::text,    awards),
         state                  = COALESCE(${(state          ?? null) as string | null}::text,    state),
-        city                   = COALESCE(${(city           ?? null) as string | null}::text,    city)
+        city                   = COALESCE(${(city           ?? null) as string | null}::text,    city),
+        advance_payment        = COALESCE(${adv}::boolean,  advance_payment),
+        advance_amount         = COALESCE(${adva}::integer, advance_amount),
+        payment_qr_url         = COALESCE(${(payment_qr_url ?? null) as string | null}::text,    payment_qr_url)
       WHERE id = ${userId}
       RETURNING profile_slug, accepting_patients, public_profile_enabled, bio,
                 gbp_url, languages, years_experience, consultation_fee, profile_photo_url,
-                education, services, awards, state, city
+                education, services, awards, state, city,
+                advance_payment, advance_amount, payment_qr_url
     `;
     res.json(rows[0] ?? {});
   } catch (e: any) {
@@ -284,7 +291,8 @@ app.get('/auth/me/public-profile', requireAuth, async (req, res) => {
     const rows = await sql`
       SELECT profile_slug, accepting_patients, public_profile_enabled, bio,
              gbp_url, languages, years_experience, consultation_fee, profile_photo_url,
-             education, services, awards, state, city
+             education, services, awards, state, city,
+             advance_payment, advance_amount, payment_qr_url
       FROM users WHERE id = ${userId}
     `;
     res.json(rows[0] ?? null);
@@ -328,7 +336,32 @@ app.patch('/booking-requests/:id', requireAuth, async (req, res) => {
       RETURNING *
     `;
     if (!rows.length) { res.status(404).json({ error: 'Not found' }); return; }
-    res.json(rows[0]);
+    const booking = rows[0];
+
+    // Email the patient when their booking is confirmed (fire-and-forget)
+    if (status === 'confirmed' && booking.patient_email) {
+      try {
+        const [doc] = await sql`
+          SELECT u.name, u.consultation_fee, c.name AS clinic_name, c.address AS clinic_address, c.phone AS clinic_phone
+          FROM users u LEFT JOIN clinics c ON c.id = ${(booking.clinic_id as string | null) ?? '__none__'}
+          WHERE u.id = ${userId}
+        `;
+        const { bookingConfirmedPatientEmail, sendMail } = await import('./lib/mailer');
+        const mail = bookingConfirmedPatientEmail({
+          patientName: booking.patient_name as string,
+          doctorName: (doc?.name as string) ?? 'your doctor',
+          date: booking.preferred_date as string,
+          time: booking.preferred_time as string,
+          clinicName: (doc?.clinic_name as string) || undefined,
+          clinicAddress: (doc?.clinic_address as string) || undefined,
+          clinicPhone: (doc?.clinic_phone as string) || undefined,
+          fee: doc?.consultation_fee ? Number(doc.consultation_fee) : null,
+        });
+        sendMail(booking.patient_email as string, mail.subject, mail.html);
+      } catch (e) { console.error('[confirmation email]', e); }
+    }
+
+    res.json(booking);
   } catch (e: any) { res.status(500).json({ error: e.message }); }
 });
 
