@@ -342,27 +342,38 @@ app.patch('/booking-requests/:id', requireAuth, async (req, res) => {
     if (!rows.length) { res.status(404).json({ error: 'Not found' }); return; }
     const booking = rows[0];
 
-    // Email the patient when their booking is confirmed (fire-and-forget)
-    if (status === 'confirmed' && booking.patient_email) {
+    // Notify the patient when their booking is confirmed: email + WhatsApp (fire-and-forget)
+    if (status === 'confirmed') {
       try {
         const [doc] = await sql`
           SELECT u.name, u.consultation_fee, c.name AS clinic_name, c.address AS clinic_address, c.phone AS clinic_phone
           FROM users u LEFT JOIN clinics c ON c.id = ${(booking.clinic_id as string | null) ?? '__none__'}
           WHERE u.id = ${userId}
         `;
-        const { bookingConfirmedPatientEmail, sendMail } = await import('./lib/mailer');
-        const mail = bookingConfirmedPatientEmail({
-          patientName: booking.patient_name as string,
-          doctorName: (doc?.name as string) ?? 'your doctor',
-          date: booking.preferred_date as string,
-          time: booking.preferred_time as string,
-          clinicName: (doc?.clinic_name as string) || undefined,
-          clinicAddress: (doc?.clinic_address as string) || undefined,
-          clinicPhone: (doc?.clinic_phone as string) || undefined,
-          fee: doc?.consultation_fee ? Number(doc.consultation_fee) : null,
-        });
-        sendMail(booking.patient_email as string, mail.subject, mail.html);
-      } catch (e) { console.error('[confirmation email]', e); }
+        if (booking.patient_email) {
+          const { bookingConfirmedPatientEmail, sendMail } = await import('./lib/mailer');
+          const mail = bookingConfirmedPatientEmail({
+            patientName: booking.patient_name as string,
+            doctorName: (doc?.name as string) ?? 'your doctor',
+            date: booking.preferred_date as string,
+            time: booking.preferred_time as string,
+            clinicName: (doc?.clinic_name as string) || undefined,
+            clinicAddress: (doc?.clinic_address as string) || undefined,
+            clinicPhone: (doc?.clinic_phone as string) || undefined,
+            fee: doc?.consultation_fee ? Number(doc.consultation_fee) : null,
+          });
+          sendMail(booking.patient_email as string, mail.subject, mail.html);
+        }
+        if (booking.patient_phone) {
+          const { waBookingConfirmedPatient } = await import('./lib/whatsapp');
+          waBookingConfirmedPatient(booking.patient_phone as string, {
+            doctorName: (doc?.name as string) ?? 'your doctor',
+            date: booking.preferred_date as string,
+            time: booking.preferred_time as string,
+            clinicName: (doc?.clinic_name as string) || '',
+          });
+        }
+      } catch (e) { console.error('[confirmation notify]', e); }
     }
 
     res.json(booking);

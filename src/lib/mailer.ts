@@ -56,15 +56,18 @@ function layout(title: string, body: string): string {
   <table width="100%" cellpadding="0" cellspacing="0" style="background:#f1f5f9;padding:24px 0">
     <tr><td align="center">
       <table width="520" cellpadding="0" cellspacing="0" style="background:#ffffff;border-radius:14px;overflow:hidden">
-        <tr><td style="background:${NAVY};padding:20px 28px">
-          <span style="color:#ffffff;font-size:18px;font-weight:bold">Vyasa Health OS</span>
+        <tr><td style="background:${NAVY};padding:18px 28px">
+          <table cellpadding="0" cellspacing="0"><tr>
+            <td><img src="https://www.vyasaa.com/logo.png" width="36" height="36" alt="Vyasa" style="display:block;border-radius:8px" /></td>
+            <td style="padding-left:12px"><span style="color:#ffffff;font-size:18px;font-weight:bold">Vyasa Integrated Healthcare</span></td>
+          </tr></table>
         </td></tr>
         <tr><td style="padding:28px">
           <h2 style="margin:0 0 14px;color:#0f172a;font-size:20px">${title}</h2>
           ${body}
         </td></tr>
         <tr><td style="padding:16px 28px;border-top:1px solid #f1f5f9">
-          <p style="margin:0;color:#94a3b8;font-size:12px">Vyasa Health Technologies · <a href="https://vyasaa.com" style="color:${TEAL};text-decoration:none">vyasaa.com</a></p>
+          <p style="margin:0;color:#94a3b8;font-size:12px">Vyasa Integrated Healthcare · <a href="https://vyasaa.com" style="color:${TEAL};text-decoration:none">vyasaa.com</a></p>
         </td></tr>
       </table>
     </td></tr>

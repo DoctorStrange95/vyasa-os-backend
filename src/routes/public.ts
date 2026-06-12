@@ -1,6 +1,7 @@
 import { Router, Request, Response } from 'express';
 import sql from '../db';
 import { sendMail, newBookingDoctorEmail } from '../lib/mailer';
+import { waNewBookingDoctor } from '../lib/whatsapp';
 
 const router = Router();
 
@@ -305,25 +306,32 @@ router.post('/doctor/:slug/book', async (req: Request, res: Response) => {
       RETURNING id, status, created_at
     `;
 
-    // Notify the doctor by email (fire-and-forget)
+    // Notify the doctor by email + WhatsApp (fire-and-forget)
     try {
       const [doc] = await sql`
-        SELECT u.name, u.email, c.name AS clinic_name
+        SELECT u.name, u.email, u.phone, c.name AS clinic_name
         FROM users u LEFT JOIN clinics c ON c.id = ${bookClinic}
         WHERE u.id = ${doctorId}
       `;
+      const cleanPhone = patient_phone.replace(/\D/g, '').slice(-10);
       if (doc?.email) {
         const mail = newBookingDoctorEmail({
           doctorName: doc.name as string,
           patientName: patient_name.trim(),
-          patientPhone: patient_phone.replace(/\D/g, '').slice(-10),
+          patientPhone: cleanPhone,
           date: preferred_date, time: preferred_time,
           clinicName: (doc.clinic_name as string) || undefined,
           reason: reason?.trim() || undefined,
         });
         sendMail(doc.email as string, mail.subject, mail.html);
       }
-    } catch (e) { console.error('[booking email]', e); }
+      if (doc?.phone) {
+        waNewBookingDoctor(doc.phone as string, {
+          patientName: patient_name.trim(), patientPhone: cleanPhone,
+          date: preferred_date, time: preferred_time,
+        });
+      }
+    } catch (e) { console.error('[booking notify]', e); }
 
     res.status(201).json({ ok: true, id: row.id, status: row.status });
   } catch (e: any) {
