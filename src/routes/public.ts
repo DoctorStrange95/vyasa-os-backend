@@ -351,7 +351,12 @@ router.get('/doctors', async (req: Request, res: Response) => {
              u.years_experience, u.consultation_fee,
              u.accepting_patients, u.city, u.state,
              u.bio,
-             p.doctor_name, p.clinic_name, p.address, p.timings, p.phone
+             p.doctor_name, p.clinic_name, p.address, p.timings, p.phone,
+             EXISTS (
+               SELECT 1 FROM clinics c2, jsonb_array_elements(c2.schedule) d
+               WHERE (c2.owner_id = u.id OR c2.id = u.clinic_id)
+                 AND (d->>'open')::boolean
+             ) AS has_schedule
       FROM users u
       LEFT JOIN pad_settings p ON p.user_id = u.id
       WHERE u.public_profile_enabled = true
@@ -409,6 +414,8 @@ router.get('/doctors', async (req: Request, res: Response) => {
         yearsExperience: r.years_experience || 0,
         consultationFee: r.consultation_fee || null,
         acceptingPatients: r.accepting_patients !== false,
+        // True only when the doctor has at least one clinic with an open weekly schedule
+        bookingOpen: r.accepting_patients !== false && r.has_schedule === true,
         city: r.city || '',
         state: r.state || '',
         clinicName: r.clinic_name || '',
