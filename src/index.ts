@@ -28,6 +28,10 @@ import { AuthPayload } from './middleware/auth';
 const app = express();
 const server = http.createServer(app);
 
+// Render terminates TLS at its proxy — trust the first X-Forwarded-For hop so
+// rate limiting and IP logging see the real client IP (fixes ERR_ERL_UNEXPECTED_X_FORWARDED_FOR)
+app.set('trust proxy', 1);
+
 // ─── CORS ─────────────────────────────────────────────────────────────────────
 
 const ALLOWED_ORIGINS = [
