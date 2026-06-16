@@ -11,9 +11,9 @@ services:
       - key: DATABASE_URL
         sync: false
       - key: JWT_SECRET
-        generateValue: true
+        value: vyasa-health-jwt-secret-2024-production-fixed
       - key: JWT_REFRESH_SECRET
-        generateValue: true
+        value: vyasa-health-refresh-secret-2024-production-fixed
       - key: GOOGLE_CLIENT_ID
         sync: false
       - key: CLIENT_ORIGIN
