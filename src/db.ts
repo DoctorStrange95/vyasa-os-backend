@@ -351,6 +351,10 @@ export async function runMigrations() {
   await sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS services TEXT DEFAULT ''`;
   await sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS awards TEXT DEFAULT ''`;
 
+  // Approval/Rejection timestamps
+  await sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS approved_at TIMESTAMPTZ`;
+  await sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS rejected_at TIMESTAMPTZ`;
+
   // Backfill reg_number from license_number for users who registered via the MCI/CI field
   await sql`
     UPDATE users SET reg_number = license_number

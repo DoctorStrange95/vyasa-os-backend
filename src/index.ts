@@ -386,16 +386,17 @@ app.post('/admin/users/:id/approve', async (req, res) => {
   const userId = Number(req.params.id);
 
   try {
-    const { approvalEmail, sendMail } = await import('./lib/mailer');
+    const { approvalEmailWithTime, sendMail } = await import('./lib/mailer');
+    const now = new Date();
 
-    // Update user status
+    // Update user status with timestamp
     const [user] = await sql`
-      UPDATE users SET approval_status = 'approved' WHERE id = ${userId}
+      UPDATE users SET approval_status = 'approved', approved_at = ${now} WHERE id = ${userId}
       RETURNING id, name, email
     `;
 
     if (user && user.email) {
-      const email = approvalEmail(user.name as string);
+      const email = approvalEmailWithTime(user.name as string, now);
       sendMail(user.email as string, email.subject, email.html);
     }
 
@@ -416,22 +417,44 @@ app.post('/admin/users/:id/reject', async (req, res) => {
 
   try {
     const { rejectionEmail, sendMail } = await import('./lib/mailer');
+    const now = new Date();
 
-    // Update user status
+    // Update user status with timestamp
     const [user] = await sql`
-      UPDATE users SET approval_status = 'rejected', rejection_reason = ${reason}
+      UPDATE users SET approval_status = 'rejected', rejection_reason = ${reason}, rejected_at = ${now}
       WHERE id = ${userId}
       RETURNING id, name, email
     `;
 
     if (user && user.email) {
-      const email = rejectionEmail(user.name as string, reason);
+      const email = rejectionEmail(user.name as string, reason, now);
       sendMail(user.email as string, email.subject, email.html);
     }
 
     res.json({ success: true, message: 'Doctor rejected and email sent' });
   } catch (error: any) {
     console.error('Rejection error:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.post('/admin/users/:id/delete', async (req, res) => {
+  const userId = Number(req.params.id);
+
+  try {
+    // Delete user (soft delete by checking role/status would be safer)
+    const [deleted] = await sql`
+      DELETE FROM users WHERE id = ${userId} AND approval_status IN ('pending', 'rejected')
+      RETURNING id, name
+    `;
+
+    if (!deleted) {
+      return res.status(400).json({ error: 'Can only delete pending or rejected doctors' });
+    }
+
+    res.json({ success: true, message: 'Doctor profile deleted' });
+  } catch (error: any) {
+    console.error('Delete error:', error);
     res.status(500).json({ error: error.message });
   }
 });

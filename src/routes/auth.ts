@@ -121,6 +121,30 @@ router.post('/register', async (req: Request, res: Response) => {
     VALUES (${user.id}, ${refreshToken}, ${expiresAt})
   `;
 
+  // Send notification email to SuperAdmin (fire-and-forget)
+  if (effectiveRole === 'clinic_admin') {
+    try {
+      const { newUserRegistrationEmail, sendMail } = await import('../lib/mailer');
+      const [superadmin] = await sql`SELECT email FROM users WHERE role = 'superadmin' LIMIT 1`;
+      if (superadmin && superadmin.email) {
+        const emailData = newUserRegistrationEmail({
+          doctorName: name,
+          email,
+          phone: phone || 'Not provided',
+          specialty: specialty || 'Not specified',
+          degrees: degrees || 'Not specified',
+          regNumber: licenseNumber || 'Not provided',
+          regState: regState || 'Not specified',
+          city: city || undefined,
+          state: state || undefined,
+        });
+        sendMail(superadmin.email as string, emailData.subject, emailData.html);
+      }
+    } catch (err) {
+      console.error('Failed to send SuperAdmin notification:', err);
+    }
+  }
+
   res.status(201).json({
     accessToken,
     refreshToken,

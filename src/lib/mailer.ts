@@ -108,7 +108,11 @@ export function approvalEmail(doctorName: string): { subject: string; html: stri
   };
 }
 
-export function rejectionEmail(doctorName: string, reason: string): { subject: string; html: string } {
+export function rejectionEmail(doctorName: string, reason: string, rejectedAt?: Date): { subject: string; html: string } {
+  const timestamp = rejectedAt ? new Date(rejectedAt).toLocaleString('en-IN', {
+    day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit', second: '2-digit'
+  }) : '—';
+
   return {
     subject: 'Your Vyasa registration — updates needed',
     html: layout('Registration update needed', `
@@ -117,13 +121,70 @@ export function rejectionEmail(doctorName: string, reason: string): { subject: s
         Thank you for registering with Vyasa Integrated Healthcare. Your account requires updates before approval.
       </p>
       <p style="background:#fef2f2;border-left:4px solid #dc2626;padding:14px;border-radius:4px;color:#7f1d1d;font-size:13px;line-height:1.6">
-        <strong>Reason:</strong> ${reason}
+        <strong>Reason:</strong> ${reason}<br>
+        <strong style="font-size:12px;color:#9f1239">Decision on:</strong> <span style="font-size:12px">${timestamp}</span>
       </p>
       <p style="color:#475569;font-size:14px;line-height:1.7">
         Please update your information and reapply. If you have questions, contact our support team at <strong>support@vyasaa.com</strong>.
       </p>
       <p style="margin:22px 0">
         <a href="https://app.vyasaa.com/login" style="background:${TEAL};color:#fff;text-decoration:none;font-weight:bold;padding:12px 22px;border-radius:10px;font-size:14px">Reapply now →</a>
+      </p>`),
+  };
+}
+
+export function approvalEmailWithTime(doctorName: string, approvedAt?: Date): { subject: string; html: string } {
+  const timestamp = approvedAt ? new Date(approvedAt).toLocaleString('en-IN', {
+    day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit', second: '2-digit'
+  }) : '—';
+
+  return {
+    subject: '🎉 Your Vyasa account is verified — welcome aboard!',
+    html: layout('Congratulations, Dr. ' + doctorName + '!', `
+      <p style="color:#475569;font-size:14px;line-height:1.7">
+        Your medical registration has been <strong>verified</strong> and your account is now active.
+        You can sign in and start using the full Vyasa Health OS platform — digital prescriptions,
+        your public booking page, patient records, and more.
+      </p>
+      <p style="background:#f0fdf4;border-left:4px solid #16a34a;padding:14px;border-radius:4px;color:#166534;font-size:12px;line-height:1.6">
+        <strong>Approved on:</strong> ${timestamp}
+      </p>
+      <p style="margin:22px 0">
+        <a href="https://app.vyasaa.com/login" style="background:${TEAL};color:#fff;text-decoration:none;font-weight:bold;padding:12px 22px;border-radius:10px;font-size:14px">Open Vyasa Health OS →</a>
+      </p>
+      <p style="color:#94a3b8;font-size:12px;line-height:1.6">
+        Tip: complete your public profile (photo, services, schedule) under My Profile → Public Profile
+        so patients can find and book you at vyasaa.com.
+      </p>`),
+  };
+}
+
+export function newUserRegistrationEmail(d: {
+  doctorName: string; email: string; phone: string; specialty: string;
+  degrees: string; regNumber: string; regState: string; city?: string; state?: string;
+}): { subject: string; html: string } {
+  return {
+    subject: `📝 New doctor registration: Dr. ${d.doctorName}`,
+    html: layout('New Registration Pending Review', `
+      <p style="color:#475569;font-size:14px;line-height:1.7">
+        A new doctor has registered and is awaiting verification. Please review their details below.
+      </p>
+      <table cellpadding="8" style="font-size:13px;color:#0f172a;width:100%;border-collapse:collapse">
+        <tr style="background:#f1f5f9"><td style="padding:10px;font-weight:bold;color:#64748b">Name</td><td style="padding:10px">${d.doctorName}</td></tr>
+        <tr><td style="padding:10px;font-weight:bold;color:#64748b">Email</td><td style="padding:10px">${d.email}</td></tr>
+        <tr style="background:#f1f5f9"><td style="padding:10px;font-weight:bold;color:#64748b">Phone</td><td style="padding:10px">${d.phone}</td></tr>
+        <tr><td style="padding:10px;font-weight:bold;color:#64748b">Specialty</td><td style="padding:10px">${d.specialty}</td></tr>
+        <tr style="background:#f1f5f9"><td style="padding:10px;font-weight:bold;color:#64748b">Degrees</td><td style="padding:10px">${d.degrees}</td></tr>
+        <tr><td style="padding:10px;font-weight:bold;color:#64748b">MCI / License</td><td style="padding:10px"><strong>${d.regNumber}</strong></td></tr>
+        <tr style="background:#f1f5f9"><td style="padding:10px;font-weight:bold;color:#64748b">State (Registration)</td><td style="padding:10px">${d.regState}</td></tr>
+        ${d.city ? `<tr><td style="padding:10px;font-weight:bold;color:#64748b">City</td><td style="padding:10px">${d.city}</td></tr>` : ''}
+        ${d.state ? `<tr style="background:#f1f5f9"><td style="padding:10px;font-weight:bold;color:#64748b">State (Practice)</td><td style="padding:10px">${d.state}</td></tr>` : ''}
+      </table>
+      <p style="margin:22px 0">
+        <a href="https://app.vyasaa.com/app/admin" style="background:${TEAL};color:#fff;text-decoration:none;font-weight:bold;padding:12px 22px;border-radius:10px;font-size:14px">Review Registration →</a>
+      </p>
+      <p style="color:#94a3b8;font-size:12px;line-height:1.6;margin-top:18px">
+        Verify medical credentials and approve or request corrections.
       </p>`),
   };
 }
