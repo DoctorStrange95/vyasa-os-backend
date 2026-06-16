@@ -29,11 +29,17 @@ function generateSlots(start: string, end: string, intervalMins = 15): string[] 
   return slots;
 }
 
-// Return YYYY-MM-DD for today + n days (UTC+5:30 friendly)
+// IST = UTC+5:30. Server runs in UTC so all date/time ops need +330 min offset.
+function istNow(): Date {
+  return new Date(Date.now() + 5.5 * 60 * 60 * 1000);
+}
 function dateStr(offsetDays = 0): string {
-  const d = new Date();
+  const d = istNow();
   d.setDate(d.getDate() + offsetDays);
   return d.toISOString().slice(0, 10);
+}
+function istTimeStr(): string {
+  return istNow().toISOString().slice(11, 16); // HH:MM in IST
 }
 
 // ─── GET /public/doctor/:slug ─────────────────────────────────────────────────
@@ -180,8 +186,8 @@ router.get('/doctor/:slug/slots', async (req: Request, res: Response) => {
     }
     const globalCap = clinicRows.reduce((acc, r) => acc + ((r.max_patients as number) ?? 20), 0) || 20;
 
-    // Dates we'll generate slots for — start tomorrow, one entry per day
-    const targetDates = Array.from({ length: days }, (_, i) => dateStr(i + 1));
+    // Dates we'll generate slots for — start today, one entry per day
+    const targetDates = Array.from({ length: days }, (_, i) => dateStr(i));
 
     // Fetch already-booked slots in that range (booking_requests + appointments)
     const fromDate = targetDates[0];
@@ -230,13 +236,12 @@ router.get('/doctor/:slug/slots', async (req: Request, res: Response) => {
         allSlots.push(...generateSlots(session.start, session.end, interval));
       }
 
-      // Filter out slots that are already filled or in the past
-      const now = new Date();
-      const nowDate = now.toISOString().slice(0, 10);
-      const nowTime = now.toTimeString().slice(0, 5);
+      // Filter out slots that are already filled or in the past (compare in IST)
+      const nowDate = dateStr(0);
+      const nowTime = istTimeStr();
 
       const available = allSlots.filter(t => {
-        if (date === nowDate && t <= nowTime) return false; // past slot today
+        if (date === nowDate && t <= nowTime) return false; // past slot today (IST)
         return (dayBooked[t] ?? 0) === 0; // not already booked
       });
 
