@@ -453,7 +453,15 @@ app.post('/admin/users/:id/delete', async (req, res) => {
   const userId = Number(req.params.id);
 
   try {
-    // Delete user completely - removes from all pages (admin, landing, directory)
+    // Delete in correct order to avoid foreign key constraint violations
+    // 1. Delete clinics first (they reference users.id)
+    await sql`DELETE FROM clinics WHERE owner_id = ${userId}`;
+
+    // 2. Delete associated settings and tokens
+    await sql`DELETE FROM pad_settings WHERE user_id = ${userId}`;
+    await sql`DELETE FROM refresh_tokens WHERE user_id = ${userId}`;
+
+    // 3. Finally delete the user
     const [deleted] = await sql`
       DELETE FROM users WHERE id = ${userId}
       RETURNING id, name, role
@@ -462,11 +470,6 @@ app.post('/admin/users/:id/delete', async (req, res) => {
     if (!deleted) {
       return res.status(404).json({ error: 'Doctor not found' });
     }
-
-    // Also delete associated data
-    await sql`DELETE FROM clinics WHERE owner_id = ${userId}`;
-    await sql`DELETE FROM pad_settings WHERE user_id = ${userId}`;
-    await sql`DELETE FROM refresh_tokens WHERE user_id = ${userId}`;
 
     res.json({ success: true, message: 'Doctor profile permanently deleted' });
   } catch (error: any) {
