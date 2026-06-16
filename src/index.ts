@@ -380,6 +380,107 @@ app.patch('/booking-requests/:id', requireAuth, async (req, res) => {
   } catch (e: any) { res.status(500).json({ error: e.message }); }
 });
 
+// ─── Admin: Approvals & Rejections ────────────────────────────────────────────
+
+app.post('/admin/users/:id/approve', async (req, res) => {
+  const userId = Number(req.params.id);
+
+  try {
+    const { approvalEmail, sendMail } = await import('./lib/mailer');
+
+    // Update user status
+    const [user] = await sql`
+      UPDATE users SET approval_status = 'approved' WHERE id = ${userId}
+      RETURNING id, name, email
+    `;
+
+    if (user && user.email) {
+      const email = approvalEmail(user.name as string);
+      sendMail(user.email as string, email.subject, email.html);
+    }
+
+    res.json({ success: true, message: 'Doctor approved and email sent' });
+  } catch (error: any) {
+    console.error('Approval error:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.post('/admin/users/:id/reject', async (req, res) => {
+  const userId = Number(req.params.id);
+  const { reason } = req.body;
+
+  if (!reason) {
+    return res.status(400).json({ error: 'Rejection reason is required' });
+  }
+
+  try {
+    const { rejectionEmail, sendMail } = await import('./lib/mailer');
+
+    // Update user status
+    const [user] = await sql`
+      UPDATE users SET approval_status = 'rejected', rejection_reason = ${reason}
+      WHERE id = ${userId}
+      RETURNING id, name, email
+    `;
+
+    if (user && user.email) {
+      const email = rejectionEmail(user.name as string, reason);
+      sendMail(user.email as string, email.subject, email.html);
+    }
+
+    res.json({ success: true, message: 'Doctor rejected and email sent' });
+  } catch (error: any) {
+    console.error('Rejection error:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// ─── Email Service ────────────────────────────────────────────────────────────
+
+app.post('/api/send-email', async (req, res) => {
+  const { to, subject, body, templateName } = req.body;
+
+  if (!to || !subject || !body) {
+    return res.status(400).json({ error: 'Missing required fields' });
+  }
+
+  try {
+    const brevoKey = process.env.BREVO_API_KEY;
+
+    if (!brevoKey) {
+      console.warn('⚠️  BREVO_API_KEY not set - email not sent to', to);
+      return res.json({ success: false, message: 'Email service not configured' });
+    }
+
+    // Send via Brevo HTTP API
+    const response = await fetch('https://api.brevo.com/v3/smtp/email', {
+      method: 'POST',
+      headers: {
+        'api-key': brevoKey,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        to: [{ email: to }],
+        sender: { email: 'support@vyasaa.com', name: 'Vyasa Health' },
+        subject,
+        htmlContent: body.replace(/\n/g, '<br>'),
+      }),
+    });
+
+    if (!response.ok) {
+      const error = await response.json();
+      console.error('Brevo API error:', error);
+      return res.status(response.status).json({ error: 'Failed to send email' });
+    }
+
+    res.json({ success: true, message: 'Email sent successfully' });
+  } catch (error) {
+    console.error('Email service error:', error);
+    res.status(500).json({ error: 'Email service failed' });
+  }
+});
+
 // ─── Global error handler (catches sync + async route errors) ────────────────
 
 app.use((err: Error, _req: express.Request, res: express.Response, _next: express.NextFunction) => {

@@ -108,6 +108,26 @@ export function approvalEmail(doctorName: string): { subject: string; html: stri
   };
 }
 
+export function rejectionEmail(doctorName: string, reason: string): { subject: string; html: string } {
+  return {
+    subject: 'Your Vyasa registration — updates needed',
+    html: layout('Registration update needed', `
+      <p style="color:#475569;font-size:14px;line-height:1.7">Hi Dr. ${doctorName},</p>
+      <p style="color:#475569;font-size:14px;line-height:1.7">
+        Thank you for registering with Vyasa Integrated Healthcare. Your account requires updates before approval.
+      </p>
+      <p style="background:#fef2f2;border-left:4px solid #dc2626;padding:14px;border-radius:4px;color:#7f1d1d;font-size:13px;line-height:1.6">
+        <strong>Reason:</strong> ${reason}
+      </p>
+      <p style="color:#475569;font-size:14px;line-height:1.7">
+        Please update your information and reapply. If you have questions, contact our support team at <strong>support@vyasaa.com</strong>.
+      </p>
+      <p style="margin:22px 0">
+        <a href="https://app.vyasaa.com/login" style="background:${TEAL};color:#fff;text-decoration:none;font-weight:bold;padding:12px 22px;border-radius:10px;font-size:14px">Reapply now →</a>
+      </p>`),
+  };
+}
+
 export function newBookingDoctorEmail(d: {
   doctorName: string; patientName: string; patientPhone: string;
   date: string; time: string; clinicName?: string; reason?: string;
