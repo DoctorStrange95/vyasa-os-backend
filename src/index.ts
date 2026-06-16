@@ -189,6 +189,17 @@ app.post('/auth/google', async (req, res) => {
   const [existing] = await sql`SELECT * FROM users WHERE email = ${googleEmail}`;
 
   if (existing) {
+    // ✅ Check approval status - only approved clinic_admin users can login via Google
+    const approvalStatus = existing.approval_status as string;
+    if (existing.role === 'clinic_admin' && approvalStatus !== 'approved') {
+      if (approvalStatus === 'pending') {
+        res.status(403).json({ error: 'Your account is pending approval. You will receive an email once approved.' });
+      } else if (approvalStatus === 'rejected') {
+        res.status(403).json({ error: 'Your account was rejected. Please contact support or reapply with corrected information.' });
+      }
+      return;
+    }
+
     // User exists — return tokens
     const p: AuthPayload = {
       userId: existing.id as number,
