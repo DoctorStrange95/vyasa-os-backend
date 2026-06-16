@@ -372,6 +372,32 @@ export async function runMigrations() {
   await sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS clinic_name TEXT DEFAULT ''`;
   await sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS department TEXT DEFAULT ''`;
 
+  // ── Backfill: create appointments for all existing confirmed booking_requests ─
+  // Only creates rows where no appointment with id 'BOOK-{id}-...' already exists
+  const confirmedBookings = await sql`
+    SELECT br.*, cl.id AS fallback_clinic_id
+    FROM booking_requests br
+    LEFT JOIN clinics cl ON cl.owner_id = br.doctor_id
+    WHERE br.status = 'confirmed' AND br.preferred_date IS NOT NULL
+  `;
+  for (const b of confirmedBookings) {
+    const aptId = `BOOK-${b.id}`;
+    const existing = await sql`SELECT id FROM appointments WHERE id LIKE ${aptId + '%'} LIMIT 1`;
+    if (existing.length > 0) continue;
+    const clinicId = (b.clinic_id as string | null) ?? (b.fallback_clinic_id as string | null);
+    if (!clinicId) continue;
+    await sql`
+      INSERT INTO appointments
+        (id, clinic_id, patient_id, patient_name, patient_age, doctor_id, date, time, reason, status)
+      VALUES
+        (${aptId}, ${clinicId}, NULL, ${b.patient_name as string},
+         ${b.patient_age ? Number(b.patient_age) : null}, ${b.doctor_id as number},
+         ${b.preferred_date as string}, ${(b.preferred_time as string | null) ?? '09:00'},
+         ${(b.reason as string | null) ?? 'OPD Appointment'}, 'scheduled')
+      ON CONFLICT DO NOTHING
+    `.catch((e: Error) => console.error('[backfill booking→apt]', b.id, e.message));
+  }
+
   console.log('✅ DB migrations complete');
 }
 
