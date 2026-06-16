@@ -368,6 +368,10 @@ export async function runMigrations() {
       AND (ps.reg_number IS NULL OR ps.reg_number = '')
   `;
 
+  // User profile fields missing from original schema
+  await sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS clinic_name TEXT DEFAULT ''`;
+  await sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS department TEXT DEFAULT ''`;
+
   console.log('✅ DB migrations complete');
 }
 
