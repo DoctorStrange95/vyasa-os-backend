@@ -34,7 +34,16 @@ router.get('/clinic', async (req: Request, res: Response) => {
   const visits = date
     ? await sql`SELECT * FROM visits WHERE clinic_id = ${clinicId} AND date = ${date as string} ORDER BY created_at DESC`
     : await sql`SELECT * FROM visits WHERE clinic_id = ${clinicId} ORDER BY date DESC, created_at DESC LIMIT 200`;
-  res.json(visits);
+  // Map snake_case DB fields to camelCase for frontend
+  const result = visits.map(v => ({
+    ...((v.data as Record<string, unknown>) ?? {}),
+    id: v.id,
+    patientId: v.patient_id,
+    date: v.date,
+    doctorName: v.doctor_name,
+    doctorId: v.doctor_id,
+  }));
+  res.json(result);
 });
 
 // ─── Upsert visit ─────────────────────────────────────────────────────────────
