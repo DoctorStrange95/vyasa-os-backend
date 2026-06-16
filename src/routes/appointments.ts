@@ -5,28 +5,39 @@ import sql from '../db';
 const router = Router();
 router.use(requireAuth);
 
+function istDateStr(offsetDays = 0): string {
+  const d = new Date(Date.now() + 5.5 * 60 * 60 * 1000);
+  d.setDate(d.getDate() + offsetDays);
+  return d.toISOString().slice(0, 10);
+}
+
 router.get('/', async (req: Request, res: Response) => {
   const { date, from, to } = req.query;
+  const userId = req.user!.userId;
   const clinicId = req.user!.clinicId;
 
+  // Return appointments for ALL clinics this doctor owns, or where they're the doctor
   let rows;
   if (date) {
     rows = await sql`
       SELECT a.*, cl.name AS clinic_name FROM appointments a
       LEFT JOIN clinics cl ON cl.id = a.clinic_id
-      WHERE a.clinic_id = ${clinicId} AND a.date = ${date as string} ORDER BY a.time`;
+      WHERE (a.doctor_id = ${userId} OR a.clinic_id IN (SELECT id FROM clinics WHERE owner_id = ${userId}) OR a.clinic_id = ${clinicId})
+        AND a.date = ${date as string} ORDER BY a.time`;
   } else if (from && to) {
     rows = await sql`
       SELECT a.*, cl.name AS clinic_name FROM appointments a
       LEFT JOIN clinics cl ON cl.id = a.clinic_id
-      WHERE a.clinic_id = ${clinicId} AND a.date >= ${from as string} AND a.date <= ${to as string} ORDER BY a.date, a.time`;
+      WHERE (a.doctor_id = ${userId} OR a.clinic_id IN (SELECT id FROM clinics WHERE owner_id = ${userId}) OR a.clinic_id = ${clinicId})
+        AND a.date >= ${from as string} AND a.date <= ${to as string} ORDER BY a.date, a.time`;
   } else {
-    const today = new Date().toISOString().slice(0, 10);
-    const future = new Date(Date.now() + 30 * 86400000).toISOString().slice(0, 10);
+    const today = istDateStr(0);
+    const future = istDateStr(30);
     rows = await sql`
       SELECT a.*, cl.name AS clinic_name FROM appointments a
       LEFT JOIN clinics cl ON cl.id = a.clinic_id
-      WHERE a.clinic_id = ${clinicId} AND a.date >= ${today} AND a.date <= ${future} ORDER BY a.date, a.time`;
+      WHERE (a.doctor_id = ${userId} OR a.clinic_id IN (SELECT id FROM clinics WHERE owner_id = ${userId}) OR a.clinic_id = ${clinicId})
+        AND a.date >= ${today} AND a.date <= ${future} ORDER BY a.date, a.time`;
   }
 
   res.json(rows.map(r => ({
@@ -54,13 +65,14 @@ router.get('/', async (req: Request, res: Response) => {
 router.post('/', async (req: Request, res: Response) => {
   const d = req.body;
   const clinicId = req.user!.clinicId;
+  const userId = req.user!.userId;
 
   const [row] = await sql`
     INSERT INTO appointments (id, clinic_id, patient_id, patient_name, patient_age, doctor_id, doctor_name,
       date, time, reason, status, notes, consultation_fee, amount_paid, payment_mode, token)
     VALUES (
       ${d.id}, ${clinicId}, ${d.patientId ?? null}, ${d.patientName}, ${d.patientAge ?? null},
-      ${d.doctorId ?? null}, ${d.doctorName ?? null},
+      ${userId}, ${d.doctorName ?? null},
       ${d.date}, ${d.time}, ${d.reason ?? ''}, ${d.status ?? 'scheduled'},
       ${d.notes ?? null}, ${d.consultationFee ?? 0}, ${d.amountPaid ?? 0},
       ${d.paymentMode ?? null}, ${d.token ?? null}

@@ -380,6 +380,29 @@ app.patch('/booking-requests/:id', requireAuth, async (req, res) => {
     if (!rows.length) { res.status(404).json({ error: 'Not found' }); return; }
     const booking = rows[0];
 
+    // When confirmed, create an appointment so it shows in Today's OPD
+    if (status === 'confirmed' && booking.preferred_date) {
+      const aptId = `BOOK-${booking.id}-${Date.now()}`;
+      const [existingClinic] = await sql`SELECT id FROM clinics WHERE owner_id = ${userId} LIMIT 1`;
+      const aptClinicId = (booking.clinic_id as string | null) ?? existingClinic?.id ?? null;
+      if (aptClinicId) {
+        sql`
+          INSERT INTO appointments (id, clinic_id, patient_id, patient_name, patient_age, doctor_id,
+            date, time, reason, status)
+          VALUES (
+            ${aptId}, ${aptClinicId}, NULL, ${booking.patient_name as string},
+            ${booking.patient_age ? Number(booking.patient_age) : null},
+            ${userId},
+            ${booking.preferred_date as string},
+            ${(booking.preferred_time as string | null) ?? '09:00'},
+            ${(booking.reason as string | null) ?? 'OPD Appointment'},
+            'scheduled'
+          )
+          ON CONFLICT DO NOTHING
+        `.catch((e) => console.error('[booking→appointment]', e));
+      }
+    }
+
     // Notify the patient when their booking is confirmed: email + WhatsApp (fire-and-forget)
     if (status === 'confirmed') {
       try {
