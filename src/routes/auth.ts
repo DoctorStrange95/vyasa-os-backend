@@ -181,6 +181,17 @@ router.post('/login', async (req: Request, res: Response) => {
     return;
   }
 
+  // ✅ Check approval status - only approved users can login
+  const approvalStatus = user.approval_status as string;
+  if (user.role === 'clinic_admin' && approvalStatus !== 'approved') {
+    if (approvalStatus === 'pending') {
+      res.status(403).json({ error: 'Your account is pending approval. You will receive an email once approved.' });
+    } else if (approvalStatus === 'rejected') {
+      res.status(403).json({ error: 'Your account was rejected. Please contact support or reapply with corrected information.' });
+    }
+    return;
+  }
+
   const payload: AuthPayload = {
     userId: user.id as number,
     email: user.email as string,
