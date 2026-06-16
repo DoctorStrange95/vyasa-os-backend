@@ -283,23 +283,31 @@ router.get('/me', requireAuth, async (req: Request, res: Response) => {
 // ─── Update profile ───────────────────────────────────────────────────────────
 
 router.patch('/me', requireAuth, async (req: Request, res: Response) => {
-  const { phone, specialty, degrees, regNumber } = req.body as {
-    phone?: string; specialty?: string; degrees?: string; regNumber?: string;
+  const { name, email, phone, specialty, degrees, regNumber, clinic_name, department, bio } = req.body as {
+    name?: string; email?: string; phone?: string; specialty?: string; degrees?: string; regNumber?: string;
+    clinic_name?: string; department?: string; bio?: string;
   };
   const userId = req.user!.userId;
 
+  // Update users table
   await sql`
     UPDATE users SET
+      name = COALESCE(${name ?? null}, name),
+      email = COALESCE(${email ?? null}, email),
       phone = COALESCE(${phone ?? null}, phone),
       specialty = COALESCE(${specialty ?? null}, specialty),
       degrees = COALESCE(${degrees ?? null}, degrees),
-      reg_number = COALESCE(${regNumber ?? null}, reg_number)
+      reg_number = COALESCE(${regNumber ?? null}, reg_number),
+      clinic_name = COALESCE(${clinic_name ?? null}, clinic_name),
+      department = COALESCE(${department ?? null}, department),
+      bio = COALESCE(${bio ?? null}, bio)
     WHERE id = ${userId}
   `;
 
-  // Mirror to pad_settings too
+  // Mirror to pad_settings too (for doctors with PAD)
   await sql`
     UPDATE pad_settings SET
+      doctor_name = COALESCE(${name ?? null}, doctor_name),
       specialty = COALESCE(${specialty ?? null}, specialty),
       degrees = COALESCE(${degrees ?? null}, degrees),
       reg_number = COALESCE(${regNumber ?? null}, reg_number)
