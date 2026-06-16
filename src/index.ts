@@ -154,7 +154,7 @@ app.post('/auth/google', async (req, res) => {
     lat?: number; lng?: number; locationLabel?: string;
   };
 
-  let googleEmail = '', googleName = 'Doctor';
+  let googleEmail = '', googleName = 'Doctor', googlePicture = '';
 
   // Try ID token first (from GoogleLogin component)
   if (idToken) {
@@ -163,6 +163,7 @@ app.post('/auth/google', async (req, res) => {
       const payload = ticket.getPayload()!;
       googleEmail = payload.email!;
       googleName = payload.name ?? 'Doctor';
+      googlePicture = payload.picture ?? '';
     } catch { /* fall through to access token */ }
   }
 
@@ -173,9 +174,10 @@ app.post('/auth/google', async (req, res) => {
         headers: { Authorization: `Bearer ${googleAccessToken}` },
       });
       if (r.ok) {
-        const info = await r.json() as { email?: string; name?: string };
+        const info = await r.json() as { email?: string; name?: string; picture?: string };
         googleEmail = info.email ?? '';
         googleName = info.name ?? 'Doctor';
+        googlePicture = info.picture ?? '';
       }
     } catch { /* fall through */ }
   }
@@ -219,9 +221,16 @@ app.post('/auth/google', async (req, res) => {
         VALUES (${existing.id}, ${existing.name as string}, ${existing.email as string}, ${existing.role as string},
                 ${ip}, ${req.headers['user-agent'] ?? null}, ${lat ?? null}, ${lng ?? null}, ${locationLabel ?? null})`.catch(() => {});
 
+    // Auto-save Google profile picture if doctor has none yet
+    if (googlePicture) {
+      sql`UPDATE users SET profile_photo_url = ${googlePicture}
+          WHERE id = ${existing.id} AND (profile_photo_url IS NULL OR profile_photo_url = '')`.catch(() => {});
+    }
+
     res.json({
       accessToken, refreshToken,
       user: { id: existing.id, name: existing.name, email: existing.email, role: existing.role, clinicId: existing.clinic_id, approvalStatus: existing.approval_status },
+      googlePicture,
       isNewUser: false,
     });
   } else {
@@ -311,6 +320,24 @@ app.get('/auth/me/public-profile', requireAuth, async (req, res) => {
       FROM users WHERE id = ${userId}
     `;
     res.json(rows[0] ?? null);
+  } catch (e: any) { res.status(500).json({ error: e.message }); }
+});
+
+// ─── Change password ──────────────────────────────────────────────────────────
+app.patch('/auth/me/change-password', requireAuth, async (req, res) => {
+  const userId = req.user!.userId;
+  const { currentPassword, newPassword } = req.body as { currentPassword?: string; newPassword?: string };
+  if (!currentPassword || !newPassword || newPassword.length < 6) {
+    return res.status(400).json({ error: 'Current password and new password (min 6 chars) required' });
+  }
+  try {
+    const rows = await sql`SELECT password_hash FROM users WHERE id = ${userId}`;
+    if (!rows[0]) return res.status(404).json({ error: 'User not found' });
+    const match = await bcrypt.compare(currentPassword, rows[0].password_hash as string);
+    if (!match) return res.status(401).json({ error: 'Current password is incorrect' });
+    const newHash = await bcrypt.hash(newPassword, 10);
+    await sql`UPDATE users SET password_hash = ${newHash} WHERE id = ${userId}`;
+    res.json({ ok: true });
   } catch (e: any) { res.status(500).json({ error: e.message }); }
 });
 
