@@ -344,6 +344,112 @@ router.post('/doctor/:slug/book', async (req: Request, res: Response) => {
   }
 });
 
+// ─── GET /public/doctors/featured — homepage carousel (quality-filtered) ─────
+router.get('/doctors/featured', async (req: Request, res: Response) => {
+  try {
+    const scheduleExists = sql`
+      EXISTS (
+        SELECT 1 FROM clinics c2, jsonb_array_elements(c2.schedule) d
+        WHERE (c2.owner_id = u.id OR c2.id = u.clinic_id)
+          AND (d->>'open')::boolean
+      )`;
+
+    const completeness = sql`
+      (CASE WHEN u.bio IS NOT NULL AND LENGTH(u.bio) > 20 THEN 1 ELSE 0 END
+       + CASE WHEN u.profile_photo_url IS NOT NULL AND u.profile_photo_url != '' THEN 2 ELSE 0 END
+       + CASE WHEN u.years_experience IS NOT NULL THEN 1 ELSE 0 END
+       + CASE WHEN u.city IS NOT NULL AND u.city != '' THEN 1 ELSE 0 END
+       + CASE WHEN u.consultation_fee IS NOT NULL THEN 1 ELSE 0 END)`;
+
+    // Quality-filtered set: booking open, name properly cased, specialty + clinic filled
+    const qualified = await sql`
+      SELECT u.id, u.name, u.specialty, u.degrees, u.profile_slug, u.profile_photo_url,
+             u.years_experience, u.consultation_fee, u.accepting_patients, u.city, u.state,
+             u.bio, u.is_featured,
+             p.doctor_name, p.clinic_name, p.address, p.timings, p.phone,
+             ${scheduleExists} AS has_schedule,
+             ${completeness} AS completeness,
+             COALESCE((
+               SELECT COUNT(*) FROM booking_requests br
+               WHERE br.doctor_id = u.id
+                 AND br.status IN ('confirmed', 'completed')
+                 AND br.created_at > NOW() - INTERVAL '30 days'
+             ), 0) AS recent_bookings,
+             COALESCE((
+               SELECT COUNT(*) FROM visits v WHERE v.doctor_id = u.id
+             ), 0) AS total_visits
+      FROM users u
+      LEFT JOIN pad_settings p ON p.user_id = u.id
+      WHERE u.public_profile_enabled = true
+        AND u.approval_status = 'approved'
+        AND u.profile_slug IS NOT NULL
+        AND u.accepting_patients != false
+        AND ${scheduleExists}
+        AND u.specialty IS NOT NULL AND TRIM(u.specialty) != ''
+        AND p.clinic_name IS NOT NULL AND TRIM(p.clinic_name) != ''
+        AND u.name != UPPER(u.name)
+        AND u.name != LOWER(u.name)
+      ORDER BY
+        u.is_featured DESC NULLS LAST,
+        recent_bookings DESC,
+        total_visits DESC,
+        completeness DESC
+      LIMIT 10
+    `;
+
+    // Backfill from most-complete remaining profiles if fewer than 5 pass the quality bar
+    const qualifiedIds = qualified.map(r => r.id as number);
+    let backfill: typeof qualified = [];
+    if (qualified.length < 5) {
+      const need = 5 - qualified.length;
+      // Fetch candidates, exclude already-selected IDs in JS to avoid SQL array syntax complexity
+      const candidates = await sql`
+        SELECT u.id, u.name, u.specialty, u.degrees, u.profile_slug, u.profile_photo_url,
+               u.years_experience, u.consultation_fee, u.accepting_patients, u.city, u.state,
+               u.bio, u.is_featured,
+               p.doctor_name, p.clinic_name, p.address, p.timings, p.phone,
+               false AS has_schedule,
+               ${completeness} AS completeness,
+               0 AS recent_bookings, 0 AS total_visits
+        FROM users u
+        LEFT JOIN pad_settings p ON p.user_id = u.id
+        WHERE u.public_profile_enabled = true
+          AND u.approval_status = 'approved'
+          AND u.profile_slug IS NOT NULL
+        ORDER BY completeness DESC
+        LIMIT 20
+      `;
+      backfill = candidates.filter(r => !qualifiedIds.includes(r.id as number)).slice(0, need);
+    }
+
+    const all = [...qualified, ...backfill].slice(0, 5);
+
+    res.json({
+      doctors: all.map(r => ({
+        id: r.id,
+        name: r.doctor_name || r.name,
+        specialty: r.specialty || '',
+        qualification: r.degrees || '',
+        profileSlug: r.profile_slug,
+        profilePhotoUrl: r.profile_photo_url || '',
+        yearsExperience: r.years_experience || 0,
+        consultationFee: r.consultation_fee || null,
+        bookingOpen: r.accepting_patients !== false && r.has_schedule === true,
+        city: r.city || '',
+        state: r.state || '',
+        clinicName: r.clinic_name || '',
+        clinicPhone: r.phone || '',
+        timings: r.timings || '',
+        bio: (r.bio as string)?.slice(0, 120) || '',
+        isFeatured: r.is_featured === true,
+      })),
+    });
+  } catch (err) {
+    console.error('[public/doctors/featured]', err);
+    res.status(500).json({ error: 'Failed to load featured doctors' });
+  }
+});
+
 // ─── GET /public/doctors — doctor directory (no auth) ────────────────────────
 router.get('/doctors', async (req: Request, res: Response) => {
   const { state, city, specialty, search, limit = '50', offset = '0' } = req.query as Record<string, string>;

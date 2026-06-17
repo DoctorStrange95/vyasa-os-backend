@@ -401,6 +401,9 @@ export async function runMigrations() {
     `.catch((e: Error) => console.error('[backfill booking→apt]', b.id, e.message));
   }
 
+  // is_featured flag for manually pinning polished profiles to the homepage
+  await sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS is_featured BOOLEAN DEFAULT false`;
+
   console.log('✅ DB migrations complete');
 }
 
