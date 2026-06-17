@@ -8,8 +8,7 @@ router.use(requireAuth);
 // ─── Get clinics for this user ────────────────────────────────────────────────
 
 router.get('/', async (req: Request, res: Response) => {
-  const clinicId = req.user!.clinicId;
-  const rows = await sql`SELECT * FROM clinics WHERE id = ${clinicId} OR owner_id = ${req.user!.userId}`;
+  const rows = await sql`SELECT * FROM clinics WHERE owner_id = ${req.user!.userId}`;
   res.json(rows.map(r => ({
     id: r.id, name: r.name, address: r.address, phone: r.phone,
     fee: Number(r.fee), maxPatients: r.max_patients, timings: r.timings,

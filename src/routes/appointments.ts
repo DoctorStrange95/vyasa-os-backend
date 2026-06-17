@@ -89,6 +89,8 @@ router.post('/', async (req: Request, res: Response) => {
 
 router.patch('/:id', async (req: Request, res: Response) => {
   const d = req.body;
+  const userId = req.user!.userId;
+  // Allow update if: doctor owns the clinic, is the assigned doctor, or it's their primary clinic
   const [row] = await sql`
     UPDATE appointments SET
       status = COALESCE(${d.status ?? null}, status),
@@ -96,7 +98,12 @@ router.patch('/:id', async (req: Request, res: Response) => {
       payment_mode = COALESCE(${d.paymentMode ?? null}, payment_mode),
       notes = COALESCE(${d.notes ?? null}, notes),
       patient_id = COALESCE(${d.patientId ?? null}, patient_id)
-    WHERE id = ${req.params.id} AND clinic_id = ${req.user!.clinicId}
+    WHERE id = ${req.params.id}
+      AND (
+        doctor_id = ${userId}
+        OR clinic_id IN (SELECT id FROM clinics WHERE owner_id = ${userId})
+        OR clinic_id = ${req.user!.clinicId}
+      )
     RETURNING *
   `;
   if (!row) { res.status(404).json({ error: 'Appointment not found' }); return; }
