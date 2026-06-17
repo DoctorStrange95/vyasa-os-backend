@@ -363,34 +363,22 @@ router.get('/doctors/featured', async (req: Request, res: Response) => {
        + CASE WHEN u.consultation_fee IS NOT NULL THEN 1 ELSE 0 END
        + CASE WHEN u.specialty IS NOT NULL AND u.specialty != '' THEN 1 ELSE 0 END)`;
 
-    // Single query — broader filter, no schedule required, ranked by quality
+    // Single query — is_featured first, then photo, then completeness
     const rows = await sql`
       SELECT u.id, u.name, u.specialty, u.degrees, u.profile_slug, u.profile_photo_url,
              u.years_experience, u.consultation_fee, u.accepting_patients, u.city, u.state,
              u.bio, u.is_featured,
              p.doctor_name, p.clinic_name, p.address, p.timings, p.phone,
              ${scheduleExists} AS has_schedule,
-             ${completeness} AS completeness,
-             COALESCE((
-               SELECT COUNT(*) FROM booking_requests br
-               WHERE br.doctor_id = u.id
-                 AND br.status IN ('confirmed', 'completed')
-                 AND br.created_at > NOW() - INTERVAL '30 days'
-             ), 0) AS recent_bookings,
-             COALESCE((
-               SELECT COUNT(*) FROM visits v WHERE v.doctor_id = u.id
-             ), 0) AS total_visits
+             ${completeness} AS completeness
       FROM users u
       LEFT JOIN pad_settings p ON p.user_id = u.id
       WHERE u.public_profile_enabled = true
         AND u.approval_status = 'approved'
         AND u.profile_slug IS NOT NULL
-        AND u.accepting_patients != false
       ORDER BY
         u.is_featured DESC NULLS LAST,
         (CASE WHEN u.profile_photo_url IS NOT NULL AND u.profile_photo_url != '' THEN 1 ELSE 0 END) DESC,
-        recent_bookings DESC,
-        total_visits DESC,
         completeness DESC
       LIMIT 5
     `;
