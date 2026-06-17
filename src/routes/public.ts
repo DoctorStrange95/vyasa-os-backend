@@ -48,7 +48,7 @@ router.get('/doctor/:slug', async (req: Request, res: Response) => {
   try {
     const rows = await sql`
       SELECT u.id, u.name, u.specialty, u.degrees,
-             COALESCE(u.reg_number, u.license_number) AS reg_number,
+             CASE WHEN u.show_reg_number = true THEN COALESCE(u.reg_number, u.license_number) ELSE '' END AS reg_number,
              u.bio, u.languages, u.accepting_patients, u.gbp_url,
              u.years_experience, u.consultation_fee, u.profile_slug,
              u.public_profile_enabled, u.profile_photo_url, u.clinic_id,
@@ -351,7 +351,6 @@ router.get('/doctors', async (req: Request, res: Response) => {
     // Build all filters without dynamic SQL — use nullable params pattern
     const rows = await sql`
       SELECT u.id, u.name, u.specialty, u.degrees,
-             COALESCE(u.reg_number, u.license_number) AS reg_number,
              u.profile_slug, u.profile_photo_url,
              u.years_experience, u.consultation_fee,
              u.accepting_patients, u.city, u.state,

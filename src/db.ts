@@ -346,6 +346,9 @@ export async function runMigrations() {
   await sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS advance_amount INTEGER`;
   await sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS payment_qr_url TEXT`;
 
+  // Privacy: hide registration/MCI number from public profile (default hidden)
+  await sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS show_reg_number BOOLEAN DEFAULT false`;
+
   // Doctor social-presence fields: education history, services offered, awards
   await sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS education TEXT DEFAULT ''`;
   await sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS services TEXT DEFAULT ''`;

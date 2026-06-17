@@ -48,13 +48,38 @@ router.get('/users/:id/sessions', async (req: Request, res: Response) => {
 // ─── Approve a user (allow full prescription access) ─────────────────────────
 
 router.post('/users/:id/approve', async (req: Request, res: Response) => {
-  const [user] = await sql`
-    UPDATE users SET approval_status = 'approved' WHERE id = ${Number(req.params.id)}
-    RETURNING name, email, role
+  const userId = Number(req.params.id);
+
+  // Fetch current state before update so we can generate slug if missing
+  const [existing] = await sql`
+    SELECT name, email, role, profile_slug FROM users WHERE id = ${userId}
   `;
-  if (user?.email && ['clinic_admin', 'doctor'].includes(user.role as string)) {
-    const mail = approvalEmail(user.name as string);
-    sendMail(user.email as string, mail.subject, mail.html);
+  if (!existing) { res.status(404).json({ error: 'User not found' }); return; }
+
+  // Generate profile_slug now if the doctor doesn't have one yet
+  if (!existing.profile_slug && ['clinic_admin', 'doctor'].includes(existing.role as string)) {
+    const base = (existing.name as string)
+      .toLowerCase()
+      .replace(/^dr\.?\s+/i, '')
+      .replace(/[^a-z0-9\s]/g, '')
+      .trim()
+      .replace(/\s+/g, '-')
+      .slice(0, 80);
+    let slug = base;
+    let n = 2;
+    while (true) {
+      const taken = await sql`SELECT id FROM users WHERE profile_slug = ${slug}`;
+      if (!taken.length) break;
+      slug = `${base}-${n++}`;
+    }
+    await sql`UPDATE users SET profile_slug = ${slug}, approved_at = NOW(), approval_status = 'approved' WHERE id = ${userId}`;
+  } else {
+    await sql`UPDATE users SET approval_status = 'approved', approved_at = NOW() WHERE id = ${userId}`;
+  }
+
+  if (existing.email && ['clinic_admin', 'doctor'].includes(existing.role as string)) {
+    const mail = approvalEmail(existing.name as string);
+    sendMail(existing.email as string, mail.subject, mail.html);
   }
   res.json({ ok: true });
 });

@@ -269,7 +269,7 @@ app.patch('/auth/me/public-profile', requireAuth, async (req, res) => {
     bio, languages, accepting_patients, public_profile_enabled,
     gbp_url, years_experience, consultation_fee, profile_photo_url,
     education, services, awards, state, city,
-    advance_payment, advance_amount, payment_qr_url,
+    advance_payment, advance_amount, payment_qr_url, show_reg_number,
   } = req.body as Record<string, unknown>;
   try {
     const ap  = accepting_patients   != null ? Boolean(accepting_patients)   : null;
@@ -278,6 +278,7 @@ app.patch('/auth/me/public-profile', requireAuth, async (req, res) => {
     const cf  = consultation_fee      != null ? Math.round(Number(consultation_fee)) : null;
     const adv = advance_payment       != null ? Boolean(advance_payment) : null;
     const adva = advance_amount       != null ? Math.round(Number(advance_amount)) : null;
+    const srn = show_reg_number       != null ? Boolean(show_reg_number) : null;
     const rows = await sql`
       UPDATE users SET
         bio                    = COALESCE(${(bio            ?? null) as string | null}::text,    bio),
@@ -295,12 +296,13 @@ app.patch('/auth/me/public-profile', requireAuth, async (req, res) => {
         city                   = COALESCE(${(city           ?? null) as string | null}::text,    city),
         advance_payment        = COALESCE(${adv}::boolean,  advance_payment),
         advance_amount         = COALESCE(${adva}::integer, advance_amount),
-        payment_qr_url         = COALESCE(${(payment_qr_url ?? null) as string | null}::text,    payment_qr_url)
+        payment_qr_url         = COALESCE(${(payment_qr_url ?? null) as string | null}::text,    payment_qr_url),
+        show_reg_number        = COALESCE(${srn}::boolean,  show_reg_number)
       WHERE id = ${userId}
       RETURNING profile_slug, accepting_patients, public_profile_enabled, bio,
                 gbp_url, languages, years_experience, consultation_fee, profile_photo_url,
                 education, services, awards, state, city,
-                advance_payment, advance_amount, payment_qr_url
+                advance_payment, advance_amount, payment_qr_url, show_reg_number
     `;
     res.json(rows[0] ?? {});
   } catch (e: any) {
@@ -316,7 +318,7 @@ app.get('/auth/me/public-profile', requireAuth, async (req, res) => {
       SELECT profile_slug, accepting_patients, public_profile_enabled, bio,
              gbp_url, languages, years_experience, consultation_fee, profile_photo_url,
              education, services, awards, state, city,
-             advance_payment, advance_amount, payment_qr_url
+             advance_payment, advance_amount, payment_qr_url, show_reg_number
       FROM users WHERE id = ${userId}
     `;
     res.json(rows[0] ?? null);
