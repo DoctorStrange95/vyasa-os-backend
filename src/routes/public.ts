@@ -344,7 +344,7 @@ router.post('/doctor/:slug/book', async (req: Request, res: Response) => {
   }
 });
 
-// ─── GET /public/doctors/featured — homepage carousel (quality-filtered) ─────
+// ─── GET /public/doctors/featured — homepage carousel ─────────────────────────
 router.get('/doctors/featured', async (req: Request, res: Response) => {
   try {
     const scheduleExists = sql`
@@ -354,15 +354,17 @@ router.get('/doctors/featured', async (req: Request, res: Response) => {
           AND (d->>'open')::boolean
       )`;
 
+    // Completeness score: profile photo heavily weighted
     const completeness = sql`
-      (CASE WHEN u.bio IS NOT NULL AND LENGTH(u.bio) > 20 THEN 1 ELSE 0 END
-       + CASE WHEN u.profile_photo_url IS NOT NULL AND u.profile_photo_url != '' THEN 2 ELSE 0 END
-       + CASE WHEN u.years_experience IS NOT NULL THEN 1 ELSE 0 END
+      (CASE WHEN u.profile_photo_url IS NOT NULL AND u.profile_photo_url != '' THEN 5 ELSE 0 END
+       + CASE WHEN u.bio IS NOT NULL AND LENGTH(u.bio) > 20 THEN 2 ELSE 0 END
+       + CASE WHEN u.years_experience IS NOT NULL AND u.years_experience > 0 THEN 1 ELSE 0 END
        + CASE WHEN u.city IS NOT NULL AND u.city != '' THEN 1 ELSE 0 END
-       + CASE WHEN u.consultation_fee IS NOT NULL THEN 1 ELSE 0 END)`;
+       + CASE WHEN u.consultation_fee IS NOT NULL THEN 1 ELSE 0 END
+       + CASE WHEN u.specialty IS NOT NULL AND u.specialty != '' THEN 1 ELSE 0 END)`;
 
-    // Quality-filtered set: booking open, name properly cased, specialty + clinic filled
-    const qualified = await sql`
+    // Single query — broader filter, no schedule required, ranked by quality
+    const rows = await sql`
       SELECT u.id, u.name, u.specialty, u.degrees, u.profile_slug, u.profile_photo_url,
              u.years_experience, u.consultation_fee, u.accepting_patients, u.city, u.state,
              u.bio, u.is_featured,
@@ -384,48 +386,17 @@ router.get('/doctors/featured', async (req: Request, res: Response) => {
         AND u.approval_status = 'approved'
         AND u.profile_slug IS NOT NULL
         AND u.accepting_patients != false
-        AND ${scheduleExists}
-        AND u.specialty IS NOT NULL AND TRIM(u.specialty) != ''
-        AND p.clinic_name IS NOT NULL AND TRIM(p.clinic_name) != ''
-        AND u.name != UPPER(u.name)
-        AND u.name != LOWER(u.name)
       ORDER BY
         u.is_featured DESC NULLS LAST,
+        (CASE WHEN u.profile_photo_url IS NOT NULL AND u.profile_photo_url != '' THEN 1 ELSE 0 END) DESC,
         recent_bookings DESC,
         total_visits DESC,
         completeness DESC
-      LIMIT 10
+      LIMIT 5
     `;
 
-    // Backfill from most-complete remaining profiles if fewer than 5 pass the quality bar
-    const qualifiedIds = qualified.map(r => r.id as number);
-    let backfill: typeof qualified = [];
-    if (qualified.length < 5) {
-      const need = 5 - qualified.length;
-      // Fetch candidates, exclude already-selected IDs in JS to avoid SQL array syntax complexity
-      const candidates = await sql`
-        SELECT u.id, u.name, u.specialty, u.degrees, u.profile_slug, u.profile_photo_url,
-               u.years_experience, u.consultation_fee, u.accepting_patients, u.city, u.state,
-               u.bio, u.is_featured,
-               p.doctor_name, p.clinic_name, p.address, p.timings, p.phone,
-               false AS has_schedule,
-               ${completeness} AS completeness,
-               0 AS recent_bookings, 0 AS total_visits
-        FROM users u
-        LEFT JOIN pad_settings p ON p.user_id = u.id
-        WHERE u.public_profile_enabled = true
-          AND u.approval_status = 'approved'
-          AND u.profile_slug IS NOT NULL
-        ORDER BY completeness DESC
-        LIMIT 20
-      `;
-      backfill = candidates.filter(r => !qualifiedIds.includes(r.id as number)).slice(0, need);
-    }
-
-    const all = [...qualified, ...backfill].slice(0, 5);
-
     res.json({
-      doctors: all.map(r => ({
+      doctors: rows.map(r => ({
         id: r.id,
         name: r.doctor_name || r.name,
         specialty: r.specialty || '',

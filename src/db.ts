@@ -404,6 +404,14 @@ export async function runMigrations() {
   // is_featured flag for manually pinning polished profiles to the homepage
   await sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS is_featured BOOLEAN DEFAULT false`;
 
+  // Pin Nilanjan to the featured carousel
+  await sql`
+    UPDATE users SET is_featured = true
+    WHERE LOWER(name) LIKE '%nilanjan%'
+      AND public_profile_enabled = true
+      AND approval_status = 'approved'
+  `;
+
   console.log('✅ DB migrations complete');
 }
 
