@@ -125,6 +125,51 @@ router.get('/audit', async (req: Request, res: Response) => {
   res.json(rows);
 });
 
+// ─── Per-doctor stats overview (all approved doctors) ────────────────────────
+
+router.get('/doctors/overview', async (_req: Request, res: Response) => {
+  const rows = await sql`
+    SELECT
+      u.id, u.name, u.email, u.specialty, u.degrees, u.phone,
+      u.reg_number, u.license_number, u.city, u.state, u.profile_slug,
+      u.approval_status, u.created_at, u.approved_at,
+      u.clinic_id, u.consultation_fee, u.years_experience,
+      c.name AS clinic_name,
+      COALESCE(br.total_bookings,     0) AS total_bookings,
+      COALESCE(br.confirmed_bookings, 0) AS confirmed_bookings,
+      COALESCE(br.pending_bookings,   0) AS pending_bookings,
+      COALESCE(v.total_visits,        0) AS total_visits,
+      COALESCE(p.total_patients,      0) AS total_patients,
+      COALESCE(ls.login_count,        0) AS login_count,
+      ls.last_login
+    FROM users u
+    LEFT JOIN clinics c ON c.id = u.clinic_id
+    LEFT JOIN (
+      SELECT doctor_id,
+        COUNT(*)                                                          AS total_bookings,
+        SUM(CASE WHEN status = 'confirmed' THEN 1 ELSE 0 END)            AS confirmed_bookings,
+        SUM(CASE WHEN status = 'pending'   THEN 1 ELSE 0 END)            AS pending_bookings
+      FROM booking_requests GROUP BY doctor_id
+    ) br ON br.doctor_id = u.id
+    LEFT JOIN (
+      SELECT doctor_id, COUNT(*) AS total_visits
+      FROM visits GROUP BY doctor_id
+    ) v ON v.doctor_id = u.id
+    LEFT JOIN (
+      SELECT attending_doctor_id, COUNT(DISTINCT id) AS total_patients
+      FROM patients WHERE attending_doctor_id IS NOT NULL
+      GROUP BY attending_doctor_id
+    ) p ON p.attending_doctor_id = u.id
+    LEFT JOIN (
+      SELECT user_id, MAX(logged_in_at) AS last_login, COUNT(*) AS login_count
+      FROM login_sessions GROUP BY user_id
+    ) ls ON ls.user_id = u.id
+    WHERE u.role IN ('clinic_admin', 'doctor') AND u.approval_status = 'approved'
+    ORDER BY total_bookings DESC, u.name
+  `;
+  res.json(rows);
+});
+
 // ─── Clinic-scoped audit log (doctor sees their own clinic's log) ─────────────
 
 export async function getClinicAuditLog(req: Request, res: Response) {
