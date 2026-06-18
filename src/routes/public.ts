@@ -245,12 +245,11 @@ router.get('/doctor/:slug/slots', async (req: Request, res: Response) => {
         return (dayBooked[t] ?? 0) === 0; // not already booked
       });
 
-      // Cap available slots to the doctor's patient limit for that day
       const remaining = Math.max(0, cap - totalBooked);
-      const cappedSlots = available.slice(0, remaining);
-
-      if (cappedSlots.length > 0) {
-        result.push({ date, slots: cappedSlots, totalSlots: cap, bookedCount: totalBooked });
+      // Return all pickable times; totalSlots carries the cap so the date card shows
+      // the patient limit rather than the raw time-interval count
+      if (available.length > 0 && remaining > 0) {
+        result.push({ date, slots: available, totalSlots: cap, bookedCount: totalBooked });
       }
     }
 
