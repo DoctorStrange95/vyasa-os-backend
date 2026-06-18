@@ -341,6 +341,10 @@ export async function runMigrations() {
   // Patient email on bookings (for confirmation emails)
   await sql`ALTER TABLE booking_requests ADD COLUMN IF NOT EXISTS patient_email TEXT DEFAULT ''`;
 
+  // Patient gender on bookings (for prescription auto-fill)
+  await sql`ALTER TABLE booking_requests ADD COLUMN IF NOT EXISTS patient_gender TEXT DEFAULT 'M'`;
+  await sql`ALTER TABLE appointments ADD COLUMN IF NOT EXISTS patient_gender TEXT DEFAULT 'M'`;
+
   // Advance payment settings + payment QR (UPI) for doctors
   await sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS advance_payment BOOLEAN DEFAULT false`;
   await sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS advance_amount INTEGER`;

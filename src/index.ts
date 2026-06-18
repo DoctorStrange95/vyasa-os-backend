@@ -389,11 +389,12 @@ app.patch('/booking-requests/:id', requireAuth, async (req, res) => {
       const aptClinicId = (booking.clinic_id as string | null) ?? existingClinic?.id ?? null;
       if (aptClinicId) {
         sql`
-          INSERT INTO appointments (id, clinic_id, patient_id, patient_name, patient_age, doctor_id,
+          INSERT INTO appointments (id, clinic_id, patient_id, patient_name, patient_age, patient_gender, doctor_id,
             date, time, reason, status)
           VALUES (
             ${aptId}, ${aptClinicId}, NULL, ${booking.patient_name as string},
             ${booking.patient_age ? Number(booking.patient_age) : null},
+            ${(booking.patient_gender as string | null) ?? 'M'},
             ${userId},
             ${booking.preferred_date as string},
             ${(booking.preferred_time as string | null) ?? '09:00'},

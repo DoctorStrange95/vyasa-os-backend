@@ -45,6 +45,7 @@ router.get('/', async (req: Request, res: Response) => {
     patientId: r.patient_id,
     patientName: r.patient_name,
     patientAge: r.patient_age,
+    patientGender: r.patient_gender ?? 'M',
     clinicId: r.clinic_id,
     clinicName: r.clinic_name ?? null,
     doctorId: r.doctor_id,

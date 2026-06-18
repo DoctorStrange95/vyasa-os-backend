@@ -262,7 +262,7 @@ router.get('/doctor/:slug/slots', async (req: Request, res: Response) => {
 // ─── POST /public/doctor/:slug/book ──────────────────────────────────────────
 router.post('/doctor/:slug/book', async (req: Request, res: Response) => {
   const { slug } = req.params;
-  const { patient_name, patient_phone, patient_email, patient_age, reason, preferred_date, preferred_time, clinic_id } = req.body;
+  const { patient_name, patient_phone, patient_email, patient_age, patient_gender, reason, preferred_date, preferred_time, clinic_id } = req.body;
 
   if (!patient_name?.trim() || !patient_phone?.trim()) {
     res.status(400).json({ error: 'Name and phone are required' }); return;
@@ -303,13 +303,14 @@ router.post('/doctor/:slug/book', async (req: Request, res: Response) => {
       if (owned.length) bookClinic = clinic_id as string;
     }
 
+    const genderVal = ['M', 'F', 'Other'].includes(patient_gender as string) ? (patient_gender as string) : 'M';
     const [row] = await sql`
       INSERT INTO booking_requests
-        (doctor_id, clinic_id, patient_name, patient_phone, patient_email, patient_age, reason, preferred_date, preferred_time)
+        (doctor_id, clinic_id, patient_name, patient_phone, patient_email, patient_age, patient_gender, reason, preferred_date, preferred_time)
       VALUES
         (${doctorId}, ${bookClinic}, ${patient_name.trim()}, ${patient_phone.replace(/\D/g, '').slice(-10)},
          ${(patient_email as string | undefined)?.trim() || ''},
-         ${patient_age ? Number(patient_age) : null}, ${reason?.trim() || ''},
+         ${patient_age ? Number(patient_age) : null}, ${genderVal}, ${reason?.trim() || ''},
          ${preferred_date}, ${preferred_time})
       RETURNING id, status, created_at
     `;
