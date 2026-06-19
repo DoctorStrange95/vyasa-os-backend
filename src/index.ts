@@ -578,6 +578,41 @@ app.post('/api/send-email', async (req, res) => {
 
 // ─── Global error handler (catches sync + async route errors) ────────────────
 
+// ─── Drug KB (crowdsourced) ───────────────────────────────────────────────────
+
+app.get('/api/drugs', requireAuth, async (req, res) => {
+  const q = (req.query.q as string ?? '').trim();
+  if (q.length < 2) { res.json([]); return; }
+  const pattern = `%${q}%`;
+  const rows = await sql`
+    SELECT name, generic_name, brand_names, form, category,
+           default_dose, default_frequency, default_duration, default_instructions, common_for
+    FROM drugs
+    WHERE name ILIKE ${pattern}
+       OR generic_name ILIKE ${pattern}
+       OR brand_names ILIKE ${pattern}
+       OR common_for ILIKE ${pattern}
+    ORDER BY
+      CASE WHEN LOWER(name) LIKE LOWER(${q + '%'}) THEN 0 ELSE 1 END,
+      LENGTH(name)
+    LIMIT 10
+  `;
+  res.json(rows);
+});
+
+app.post('/api/drugs', requireAuth, async (req, res) => {
+  const { name, genericName, form, category, defaultDose, defaultFrequency, defaultDuration, defaultInstructions, commonFor } = req.body as Record<string, string>;
+  if (!name?.trim()) { res.status(400).json({ error: 'name required' }); return; }
+  const cleanName = name.trim();
+  const existing = await sql`SELECT id FROM drugs WHERE LOWER(name) = LOWER(${cleanName})`;
+  if (existing.length > 0) { res.status(200).json({ existed: true }); return; }
+  await sql`
+    INSERT INTO drugs (name, generic_name, form, category, default_dose, default_frequency, default_duration, default_instructions, common_for, added_by)
+    VALUES (${cleanName}, ${genericName ?? ''}, ${form ?? ''}, ${category ?? ''}, ${defaultDose ?? ''}, ${defaultFrequency ?? ''}, ${defaultDuration ?? ''}, ${defaultInstructions ?? ''}, ${commonFor ?? ''}, ${req.user!.userId})
+  `;
+  res.status(201).json({ saved: true });
+});
+
 app.use((err: Error, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
   console.error('[unhandled route error]', err);
   if (res.headersSent) return;

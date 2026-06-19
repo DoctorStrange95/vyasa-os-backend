@@ -415,6 +415,30 @@ export async function runMigrations() {
       AND public_profile_enabled = true
   `;
 
+  // ── Drug Knowledge Base (crowdsourced) ───────────────────────────────────────
+  await sql`
+    CREATE TABLE IF NOT EXISTS drugs (
+      id BIGSERIAL PRIMARY KEY,
+      name TEXT NOT NULL,
+      generic_name TEXT DEFAULT '',
+      brand_names TEXT DEFAULT '',
+      form TEXT DEFAULT '',
+      category TEXT DEFAULT '',
+      default_dose TEXT DEFAULT '',
+      default_frequency TEXT DEFAULT '',
+      default_duration TEXT DEFAULT '',
+      default_instructions TEXT DEFAULT '',
+      common_for TEXT DEFAULT '',
+      added_by INTEGER,
+      created_at TIMESTAMPTZ DEFAULT NOW()
+    )
+  `;
+  await sql`CREATE INDEX IF NOT EXISTS idx_drugs_name ON drugs(name)`;
+  await sql`CREATE UNIQUE INDEX IF NOT EXISTS idx_drugs_name_unique ON drugs(LOWER(name))`;
+
+  // E-signature URL stored per doctor in pad_settings
+  await sql`ALTER TABLE pad_settings ADD COLUMN IF NOT EXISTS e_sign_url TEXT DEFAULT ''`;
+
   console.log('✅ DB migrations complete');
 }
 
