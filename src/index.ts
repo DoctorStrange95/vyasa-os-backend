@@ -383,12 +383,19 @@ app.patch('/booking-requests/:id', requireAuth, async (req, res) => {
     const booking = rows[0];
 
     // When confirmed, create an appointment so it shows in Today's OPD
-    if (status === 'confirmed' && booking.preferred_date) {
+    if (status === 'confirmed') {
       const aptId = `BOOK-${booking.id}-${Date.now()}`;
       const [existingClinic] = await sql`SELECT id FROM clinics WHERE owner_id = ${userId} LIMIT 1`;
       const aptClinicId = (booking.clinic_id as string | null) ?? existingClinic?.id ?? null;
+
       if (aptClinicId) {
-        sql`
+        // Use today's date if preferred_date is in the past or missing
+        const today = new Date().toISOString().slice(0, 10);
+        const rawDate = (booking.preferred_date as string | null) ?? today;
+        const aptDate = rawDate < today ? today : rawDate;
+
+        // Await the INSERT so refreshAppointments() on the frontend sees it immediately
+        await sql`
           INSERT INTO appointments (id, clinic_id, patient_id, patient_name, patient_age, patient_gender, doctor_id,
             date, time, reason, status)
           VALUES (
@@ -396,7 +403,7 @@ app.patch('/booking-requests/:id', requireAuth, async (req, res) => {
             ${booking.patient_age ? Number(booking.patient_age) : null},
             ${(booking.patient_gender as string | null) ?? 'M'},
             ${userId},
-            ${booking.preferred_date as string},
+            ${aptDate},
             ${(booking.preferred_time as string | null) ?? '09:00'},
             ${(booking.reason as string | null) ?? 'OPD Appointment'},
             'scheduled'
