@@ -12,7 +12,14 @@ router.use(requireAuth);
 // aren't lost — but staff invited to someone else's clinic are hidden.)
 router.get('/pending', async (req: Request, res: Response) => {
   const clinics = await sql`SELECT id FROM clinics WHERE owner_id = ${req.user!.userId}`;
-  const myClinicIds = clinics.map(c => c.id as string);
+  let myClinicIds = clinics.map(c => c.id as string);
+
+  // Fallback: if no clinics found in clinics table, use the clinic_id from the user's own record
+  // (handles doctors who never synced their local padStore clinics to the backend)
+  if (myClinicIds.length === 0) {
+    const [doctor] = await sql`SELECT clinic_id FROM users WHERE id = ${req.user!.userId}`;
+    if (doctor?.clinic_id) myClinicIds = [doctor.clinic_id as string];
+  }
 
   const pending = await sql`
     SELECT id, name, email, phone, role, degrees, specialty,
@@ -23,9 +30,12 @@ router.get('/pending', async (req: Request, res: Response) => {
     ORDER BY created_at DESC
   `;
   const scoped = pending.filter(p => {
-    const invited = (p.invited_clinic_ids as string | null)?.split(',').map(s => s.trim()).filter(Boolean) ?? [];
+    // decodeURIComponent handles the case where the invite link was double-encoded
+    // (e.g. shared via WhatsApp converting %2C → %252C, making split(',') fail)
+    const raw = decodeURIComponent((p.invited_clinic_ids as string | null) ?? '');
+    const invited = raw.split(',').map(s => s.trim()).filter(Boolean);
     if (invited.length === 0) return true; // legacy registration with no invite metadata
-    return invited.some(id => myClinicIds.includes(id));
+    return myClinicIds.length === 0 || invited.some(id => myClinicIds.includes(id));
   });
   res.json(scoped);
 });

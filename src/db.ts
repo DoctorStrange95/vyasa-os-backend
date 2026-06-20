@@ -439,6 +439,69 @@ export async function runMigrations() {
   // E-signature URL stored per doctor in pad_settings
   await sql`ALTER TABLE pad_settings ADD COLUMN IF NOT EXISTS e_sign_url TEXT DEFAULT ''`;
 
+  // ── Organizations (clinics / hospitals as entities) ───────────────────────
+  await sql`
+    CREATE TABLE IF NOT EXISTS organizations (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      type TEXT NOT NULL DEFAULT 'clinic',   -- 'clinic' | 'hospital'
+      address TEXT DEFAULT '',
+      city TEXT DEFAULT '',
+      state TEXT DEFAULT '',
+      phone TEXT DEFAULT '',
+      email TEXT DEFAULT '',
+      gstin TEXT DEFAULT '',
+      reg_number TEXT DEFAULT '',
+      owner_id INTEGER REFERENCES users(id),
+      logo_url TEXT DEFAULT '',
+      created_at TIMESTAMPTZ DEFAULT NOW()
+    )
+  `;
+  await sql`CREATE INDEX IF NOT EXISTS idx_org_owner ON organizations(owner_id)`;
+
+  // ── Org members: staff belonging to an organization ───────────────────────
+  await sql`
+    CREATE TABLE IF NOT EXISTS org_members (
+      id SERIAL PRIMARY KEY,
+      org_id TEXT NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+      user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      role TEXT NOT NULL,
+      department TEXT DEFAULT '',
+      joined_at TIMESTAMPTZ DEFAULT NOW(),
+      UNIQUE(org_id, user_id)
+    )
+  `;
+  await sql`CREATE INDEX IF NOT EXISTS idx_org_members_org ON org_members(org_id)`;
+  await sql`CREATE INDEX IF NOT EXISTS idx_org_members_user ON org_members(user_id)`;
+
+  // Link users to their organization
+  await sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS org_id TEXT REFERENCES organizations(id)`;
+
+  // ── Billing / Invoices ────────────────────────────────────────────────────
+  await sql`
+    CREATE TABLE IF NOT EXISTS bills (
+      id TEXT PRIMARY KEY,
+      org_id TEXT REFERENCES organizations(id),
+      clinic_id TEXT,
+      patient_id TEXT,
+      patient_name TEXT NOT NULL,
+      items JSONB NOT NULL DEFAULT '[]',
+      subtotal NUMERIC DEFAULT 0,
+      discount NUMERIC DEFAULT 0,
+      tax NUMERIC DEFAULT 0,
+      total NUMERIC DEFAULT 0,
+      status TEXT DEFAULT 'draft',   -- draft | pending | paid | partially-paid
+      payment_mode TEXT,
+      notes TEXT DEFAULT '',
+      created_by INTEGER REFERENCES users(id),
+      created_at TIMESTAMPTZ DEFAULT NOW(),
+      paid_at TIMESTAMPTZ
+    )
+  `;
+  await sql`CREATE INDEX IF NOT EXISTS idx_bills_org ON bills(org_id)`;
+  await sql`CREATE INDEX IF NOT EXISTS idx_bills_patient ON bills(patient_id)`;
+  await sql`CREATE INDEX IF NOT EXISTS idx_bills_status ON bills(org_id, status)`;
+
   console.log('✅ DB migrations complete');
 }
 
