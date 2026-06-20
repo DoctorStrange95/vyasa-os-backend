@@ -369,24 +369,48 @@ router.get('/doctors/featured', async (req: Request, res: Response) => {
        + CASE WHEN u.consultation_fee IS NOT NULL THEN 1 ELSE 0 END
        + CASE WHEN u.specialty IS NOT NULL AND u.specialty != '' THEN 1 ELSE 0 END)`;
 
-    // Single query — is_featured first, then photo, then completeness
+    // Dynamic score: bookings + recent login + profile completeness + has open schedule
+    const dynamicScore = sql`
+      (
+        -- Booking activity: up to 10 pts
+        LEAST(COALESCE(br.total_bookings, 0), 10)
+        -- Recent login within 7 days: 5 pts
+        + CASE WHEN ls.last_login > NOW() - INTERVAL '7 days' THEN 5 ELSE 0 END
+        -- Recent login within 30 days: 2 pts
+        + CASE WHEN ls.last_login > NOW() - INTERVAL '30 days' THEN 2 ELSE 0 END
+        -- Accepting patients with open schedule: 4 pts
+        + CASE WHEN u.accepting_patients = true AND ${scheduleExists} THEN 4 ELSE 0 END
+        -- Profile completeness (matches ${completeness})
+        + ${completeness}
+      )`;
+
+    // Pinned (is_featured=true) doctors always first, rest ranked by dynamic score
     const rows = await sql`
       SELECT u.id, u.name, u.specialty, u.degrees, u.profile_slug, u.profile_photo_url,
              u.years_experience, u.consultation_fee, u.accepting_patients, u.city, u.state,
              u.bio, u.is_featured,
              p.doctor_name, p.clinic_name, p.address, p.timings, p.phone,
              ${scheduleExists} AS has_schedule,
-             ${completeness} AS completeness
+             ${completeness} AS completeness,
+             ${dynamicScore} AS score
       FROM users u
       LEFT JOIN pad_settings p ON p.user_id = u.id
+      LEFT JOIN (
+        SELECT doctor_id, COUNT(*) AS total_bookings
+        FROM booking_requests GROUP BY doctor_id
+      ) br ON br.doctor_id = u.id
+      LEFT JOIN (
+        SELECT user_id, MAX(logged_in_at) AS last_login
+        FROM login_sessions GROUP BY user_id
+      ) ls ON ls.user_id = u.id
       WHERE u.public_profile_enabled = true
         AND u.approval_status = 'approved'
         AND u.profile_slug IS NOT NULL
+        AND u.show_in_directory IS NOT false
       ORDER BY
         u.is_featured DESC NULLS LAST,
-        (CASE WHEN u.profile_photo_url IS NOT NULL AND u.profile_photo_url != '' THEN 1 ELSE 0 END) DESC,
-        completeness DESC
-      LIMIT 5
+        score DESC
+      LIMIT 6
     `;
 
     res.json({
