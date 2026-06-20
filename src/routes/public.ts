@@ -425,7 +425,7 @@ router.get('/doctors', async (req: Request, res: Response) => {
              u.profile_slug, u.profile_photo_url,
              u.years_experience, u.consultation_fee,
              u.accepting_patients, u.city, u.state,
-             u.bio,
+             u.bio, u.is_featured,
              p.doctor_name, p.clinic_name, p.address, p.timings, p.phone,
              EXISTS (
                SELECT 1 FROM clinics c2, jsonb_array_elements(c2.schedule) d
@@ -437,6 +437,7 @@ router.get('/doctors', async (req: Request, res: Response) => {
       WHERE u.public_profile_enabled = true
         AND u.approval_status = 'approved'
         AND u.profile_slug IS NOT NULL
+        AND u.show_in_directory IS NOT false
         AND (${state ?? null}::text IS NULL OR LOWER(u.state) = LOWER(${state ?? ''}))
         AND (${city ?? null}::text IS NULL OR LOWER(u.city) = LOWER(${city ?? ''}))
         AND (${specialty ?? null}::text IS NULL OR LOWER(u.specialty) ILIKE ${specialty ? `%${specialty}%` : ''})
@@ -445,7 +446,10 @@ router.get('/doctors', async (req: Request, res: Response) => {
              OR LOWER(u.specialty) ILIKE ${search ? `%${search}%` : ''}
              OR LOWER(u.city) ILIKE ${search ? `%${search}%` : ''}
              OR LOWER(p.clinic_name) ILIKE ${search ? `%${search}%` : ''})
-      ORDER BY u.created_at DESC
+      ORDER BY
+        u.is_featured DESC NULLS LAST,
+        (u.profile_photo_url IS NOT NULL AND u.profile_photo_url != '') DESC,
+        u.created_at DESC
       LIMIT ${Number(limit)} OFFSET ${Number(offset)}
     `;
 
@@ -455,6 +459,7 @@ router.get('/doctors', async (req: Request, res: Response) => {
       WHERE u.public_profile_enabled = true
         AND u.approval_status = 'approved'
         AND u.profile_slug IS NOT NULL
+        AND u.show_in_directory IS NOT false
     `;
 
     // Fetch distinct states + cities for filter UI

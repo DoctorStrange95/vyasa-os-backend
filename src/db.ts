@@ -454,6 +454,9 @@ export async function runMigrations() {
     }
   }
 
+  // show_in_directory flag: superadmin can hide a doctor from /doctors listing
+  await sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS show_in_directory BOOLEAN DEFAULT true`;
+
   // is_featured flag for manually pinning polished profiles to the homepage
   await sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS is_featured BOOLEAN DEFAULT false`;
 

@@ -159,6 +159,7 @@ router.get('/doctors/overview', async (_req: Request, res: Response) => {
       u.reg_number, u.license_number, u.city, u.state, u.profile_slug,
       u.approval_status, u.created_at, u.approved_at,
       u.clinic_id, u.consultation_fee, u.years_experience,
+      COALESCE(u.show_in_directory, true) AS show_in_directory,
       c.name AS clinic_name,
       COALESCE(br.total_bookings,     0) AS total_bookings,
       COALESCE(br.confirmed_bookings, 0) AS confirmed_bookings,
@@ -193,6 +194,15 @@ router.get('/doctors/overview', async (_req: Request, res: Response) => {
     ORDER BY total_bookings DESC, u.name
   `;
   res.json(rows);
+});
+
+// ─── Superadmin: toggle show_in_directory for a doctor ───────────────────────
+
+router.patch('/doctors/:id/directory', async (req: Request, res: Response) => {
+  if (req.user!.role !== 'superadmin') { res.status(403).json({ error: 'Forbidden' }); return; }
+  const { show } = req.body as { show: boolean };
+  await sql`UPDATE users SET show_in_directory = ${show} WHERE id = ${req.params.id}`;
+  res.json({ ok: true, show });
 });
 
 // ─── Clinic-scoped audit log (doctor sees their own clinic's log) ─────────────
