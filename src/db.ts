@@ -412,6 +412,48 @@ export async function runMigrations() {
     `.catch((e: Error) => console.error('[backfill booking→apt]', b.id, e.message));
   }
 
+  // ── Backfill: recover invited_by_user_id for approved staff with orphaned clinic_id ──
+  // When a clinic is deleted, approved staff lose visibility because clinic_id no longer
+  // matches any active clinic. We infer the approving doctor from two sources:
+  //   1. The auto-generated clinic ID format "clinic_<userId>" (e.g. clinic_3 → user 3)
+  //   2. Matching invited_clinic_ids against existing clinics in the clinics table
+  // This runs on every startup but is idempotent (COALESCE never overwrites existing values).
+
+  const orphanedStaff = await sql`
+    SELECT id, clinic_id, invited_clinic_ids
+    FROM users
+    WHERE approval_status = 'approved'
+      AND role NOT IN ('clinic_admin', 'superadmin', 'patient')
+      AND invited_by_user_id IS NULL
+  `;
+
+  for (const s of orphanedStaff) {
+    const clinicIdStr = (s.clinic_id as string | null) ?? '';
+    const invitedIds = String(s.invited_clinic_ids || '').split(',').map(x => x.trim()).filter(Boolean);
+    const allIds = Array.from(new Set([...invitedIds, ...(clinicIdStr ? [clinicIdStr] : [])]));
+    let resolved: number | null = null;
+
+    // Try: auto-generated clinic IDs like "clinic_3" encode the owner's user_id
+    for (const cid of allIds) {
+      const match = /^clinic_(\d+)$/.exec(cid);
+      if (match) {
+        const uid = Number(match[1]);
+        const [doc] = await sql`SELECT id FROM users WHERE id = ${uid} AND role = 'clinic_admin'`;
+        if (doc) { resolved = uid; break; }
+      }
+    }
+
+    // Try: match against currently existing clinics
+    if (!resolved && allIds.length > 0) {
+      const [byClinic] = await sql`SELECT owner_id FROM clinics WHERE id = ANY(${allIds}) LIMIT 1`;
+      if (byClinic) resolved = byClinic.owner_id as number;
+    }
+
+    if (resolved) {
+      await sql`UPDATE users SET invited_by_user_id = ${resolved} WHERE id = ${s.id} AND invited_by_user_id IS NULL`;
+    }
+  }
+
   // is_featured flag for manually pinning polished profiles to the homepage
   await sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS is_featured BOOLEAN DEFAULT false`;
 

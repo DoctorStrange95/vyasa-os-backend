@@ -47,27 +47,45 @@ router.get('/pending', async (req: Request, res: Response) => {
 });
 
 // GET /staff/active — returns approved staff belonging to the doctor's clinics
+// Primary match: invited_by_user_id = doctor (set on approve / invite link)
+// Secondary: clinic_id = ANY(doctor's clinics) for older records without invited_by_user_id
 router.get('/active', async (req: Request, res: Response) => {
-  const user = req.user!;
-  const clinics = await sql`SELECT id FROM clinics WHERE owner_id = ${user.userId}`;
+  const userId = req.user!.userId;
+  const clinics = await sql`SELECT id FROM clinics WHERE owner_id = ${userId}`;
   const clinicIds = clinics.map(c => c.id as string);
 
-  if (clinicIds.length === 0) {
-    res.json([]);
-    return;
-  }
-
-  const active = await sql`
-    SELECT id, name, email, phone, role, degrees, specialty, clinic_id, created_at
+  // Primary: staff who were approved by / invited by this doctor
+  const byInvite = await sql`
+    SELECT id, name, email, phone, role, degrees, specialty, department, clinic_id, created_at
     FROM users
     WHERE approval_status = 'approved'
-      AND role != 'clinic_admin'
-      AND role != 'superadmin'
-      AND clinic_id = ANY(${clinicIds})
+      AND role NOT IN ('clinic_admin', 'superadmin', 'patient')
+      AND invited_by_user_id = ${userId}
     ORDER BY name
   `;
 
-  res.json(active);
+  // Secondary: legacy staff with no invited_by_user_id but assigned to this doctor's clinic
+  let byClinic: typeof byInvite = [];
+  if (clinicIds.length > 0) {
+    byClinic = await sql`
+      SELECT id, name, email, phone, role, degrees, specialty, department, clinic_id, created_at
+      FROM users
+      WHERE approval_status = 'approved'
+        AND role NOT IN ('clinic_admin', 'superadmin', 'patient')
+        AND invited_by_user_id IS NULL
+        AND clinic_id = ANY(${clinicIds})
+      ORDER BY name
+    `;
+  }
+
+  // Merge without duplicates (byInvite takes precedence)
+  const seen = new Set(byInvite.map(u => u.id));
+  const combined = [
+    ...byInvite,
+    ...byClinic.filter(u => !seen.has(u.id)),
+  ].sort((a, b) => String(a.name).localeCompare(String(b.name)));
+
+  res.json(combined);
 });
 
 // POST /staff/:id/approve — assign to first matched clinic and mark approved
@@ -84,18 +102,21 @@ router.post('/:id/approve', async (req: Request, res: Response) => {
   }
 
   // Verify the target user was actually invited to one of this doctor's clinics
-  const [target] = await sql`SELECT id, invited_clinic_ids FROM users WHERE id = ${targetId}`;
+  const [target] = await sql`SELECT id, invited_clinic_ids, invited_by_user_id FROM users WHERE id = ${targetId}`;
   if (!target) {
     res.status(404).json({ error: 'User not found' });
     return;
   }
 
+  // Primary auth check: if staff was invited directly by this doctor, allow
+  const directlyInvited = (target.invited_by_user_id as number | null) === user.userId;
+
+  // Secondary check: match via clinic IDs
   const invitedIds = (target.invited_clinic_ids as string | null)?.split(',').map(s => s.trim()).filter(Boolean) ?? [];
   const matchedClinic = clinicIds.find(id => invitedIds.includes(id));
 
-  // If they were explicitly invited to a different doctor's clinic, refuse —
-  // silently absorbing someone else's staff would be wrong.
-  if (!matchedClinic && invitedIds.length > 0) {
+  // If they were explicitly invited to a different doctor's clinic, refuse
+  if (!directlyInvited && !matchedClinic && invitedIds.length > 0) {
     res.status(403).json({ error: 'This staff member was invited to a different clinic.' });
     return;
   }
@@ -105,12 +126,64 @@ router.post('/:id/approve', async (req: Request, res: Response) => {
 
   await sql`
     UPDATE users
-    SET approval_status = 'approved', clinic_id = ${assignClinic}
+    SET approval_status = 'approved',
+        clinic_id = ${assignClinic},
+        invited_by_user_id = COALESCE(invited_by_user_id, ${user.userId}),
+        approved_at = NOW()
     WHERE id = ${targetId}
   `;
 
   auditFromReq(req, 'staff.approve', 'user', String(targetId), { clinicId: assignClinic });
   res.json({ ok: true, clinicId: assignClinic });
+});
+
+// POST /staff/create — directly create an approved staff member (no invite flow)
+// Used by clinic_admin when adding staff manually from the UI
+router.post('/create', async (req: Request, res: Response) => {
+  const user = req.user!;
+  if (user.role !== 'clinic_admin' && user.role !== 'superadmin') {
+    res.status(403).json({ error: 'Only clinic admins can create staff directly' });
+    return;
+  }
+
+  const { name, email, phone, role, department, specialty, shift } = req.body as {
+    name: string; email: string; phone?: string; role?: string;
+    department?: string; specialty?: string; shift?: string;
+  };
+  if (!name?.trim() || !email?.trim()) {
+    res.status(400).json({ error: 'Name and email are required' });
+    return;
+  }
+
+  const clinics = await sql`SELECT id FROM clinics WHERE owner_id = ${user.userId}`;
+  const clinicIds = clinics.map(c => c.id as string);
+  const assignClinic = clinicIds[0] ?? null;
+
+  const bcrypt = await import('bcryptjs');
+  const tempPass = Math.random().toString(36).slice(-10) + 'A1!';
+  const passwordHash = await bcrypt.hash(tempPass, 10);
+
+  try {
+    const [created] = await sql`
+      INSERT INTO users (name, email, phone, role, department, specialty,
+                         clinic_id, invited_by_user_id, approval_status,
+                         password_hash, approved_at)
+      VALUES (${name.trim()}, ${email.trim().toLowerCase()},
+              ${phone ?? ''}, ${role ?? 'nurse'},
+              ${department ?? ''}, ${specialty ?? ''},
+              ${assignClinic}, ${user.userId}, 'approved',
+              ${passwordHash}, NOW())
+      RETURNING id, name, email, phone, role, specialty, department, clinic_id, created_at
+    `;
+    auditFromReq(req, 'staff.create', 'user', String(created.id), { clinic: assignClinic });
+    res.status(201).json({ ...created, status: 'active' });
+  } catch (err: unknown) {
+    if ((err as { code?: string }).code === '23505') {
+      res.status(409).json({ error: 'A user with this email already exists' });
+    } else {
+      throw err;
+    }
+  }
 });
 
 // POST /staff/:id/reject

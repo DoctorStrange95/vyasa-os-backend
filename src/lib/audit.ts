@@ -6,7 +6,7 @@ export type AuditAction =
   | 'visit.create' | 'visit.read' | 'visit.update' | 'visit.delete'
   | 'vitals.create' | 'vitals.read' | 'vitals.update' | 'vitals.delete'
   | 'appointment.create' | 'appointment.read' | 'appointment.update' | 'appointment.delete'
-  | 'staff.approve' | 'staff.reject' | 'staff.remove'
+  | 'staff.approve' | 'staff.reject' | 'staff.remove' | 'staff.create'
   | 'auth.login' | 'auth.logout' | 'auth.register'
   | 'settings.update';
 

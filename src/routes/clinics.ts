@@ -69,21 +69,36 @@ router.patch('/:id', async (req: Request, res: Response) => {
 // ─── Delete clinic ────────────────────────────────────────────────────────────
 
 router.delete('/:id', async (req: Request, res: Response) => {
+  const doctorId = req.user!.userId;
+  const clinicId = req.params.id;
+
   const [row] = await sql`
-    DELETE FROM clinics WHERE id = ${req.params.id} AND owner_id = ${req.user!.userId}
+    DELETE FROM clinics WHERE id = ${clinicId} AND owner_id = ${doctorId}
     RETURNING id
   `;
   if (!row) { res.status(404).json({ error: 'Clinic not found' }); return; }
 
-  // If the deleted clinic was the doctor's primary clinic_id, point it to another
-  // clinic they own, or null. Without this, the db.ts backfill migration recreates
-  // the deleted clinic every time the backend restarts.
+  // Find the doctor's next remaining clinic (after deletion)
   const [next] = await sql`
-    SELECT id FROM clinics WHERE owner_id = ${req.user!.userId} LIMIT 1
+    SELECT id FROM clinics WHERE owner_id = ${doctorId} LIMIT 1
   `;
+
+  // Update the doctor's own clinic_id pointer so the backfill migration
+  // doesn't recreate the deleted clinic on backend restart
   await sql`
     UPDATE users SET clinic_id = ${next?.id ?? null}
-    WHERE id = ${req.user!.userId} AND clinic_id = ${req.params.id}
+    WHERE id = ${doctorId} AND clinic_id = ${clinicId}
+  `;
+
+  // Reassign all approved staff whose clinic_id pointed to the deleted clinic.
+  // Also stamp invited_by_user_id so they remain visible even if reassigned to null.
+  await sql`
+    UPDATE users SET
+      clinic_id = ${next?.id ?? null},
+      invited_by_user_id = COALESCE(invited_by_user_id, ${doctorId})
+    WHERE clinic_id = ${clinicId}
+      AND role NOT IN ('clinic_admin', 'superadmin')
+      AND approval_status = 'approved'
   `;
 
   res.status(204).end();
