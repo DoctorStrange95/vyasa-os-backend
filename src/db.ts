@@ -357,8 +357,8 @@ export async function runMigrations() {
   await sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS advance_amount INTEGER`;
   await sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS payment_qr_url TEXT`;
 
-  // Privacy: hide registration/MCI number from public profile (default hidden)
-  await sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS show_reg_number BOOLEAN DEFAULT false`;
+  // Privacy: show registration/NMC number on public profile (default shown)
+  await sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS show_reg_number BOOLEAN DEFAULT true`;
 
   // Doctor social-presence fields: education history, services offered, awards
   await sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS education TEXT DEFAULT ''`;
@@ -571,6 +571,18 @@ export async function runMigrations() {
       }
     }
   }
+
+  // Backfill: auto-enable show_reg_number for doctors who have a reg number saved.
+  // Default was false (hidden) but if a doctor entered their number, they expect it to show.
+  await sql`
+    UPDATE users SET show_reg_number = true
+    WHERE role = 'clinic_admin'
+      AND show_reg_number = false
+      AND (
+        (reg_number IS NOT NULL AND reg_number != '')
+        OR (license_number IS NOT NULL AND license_number != '')
+      )
+  `;
 
   console.log('✅ DB migrations complete');
 }
