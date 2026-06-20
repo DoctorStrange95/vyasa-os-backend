@@ -101,6 +101,14 @@ router.delete('/:id', async (req: Request, res: Response) => {
       AND approval_status = 'approved'
   `;
 
+  // Reassign all patients whose clinic_id pointed to the deleted clinic
+  await sql`
+    UPDATE patients SET
+      clinic_id = ${next?.id ?? null},
+      attending_doctor_id = COALESCE(attending_doctor_id, ${doctorId})
+    WHERE clinic_id = ${clinicId}
+  `;
+
   res.status(204).end();
 });
 

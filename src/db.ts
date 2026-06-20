@@ -551,6 +551,27 @@ export async function runMigrations() {
   await sql`CREATE INDEX IF NOT EXISTS idx_bills_patient ON bills(patient_id)`;
   await sql`CREATE INDEX IF NOT EXISTS idx_bills_status ON bills(org_id, status)`;
 
+  // Backfill: patients stored under deleted auto-generated clinic IDs (clinic_{userId})
+  // Re-point them to that doctor's current active clinic so simple clinic-based lookups work.
+  const orphanedPatients = await sql`
+    SELECT id, clinic_id FROM patients
+    WHERE clinic_id LIKE 'clinic_%'
+      AND clinic_id NOT IN (SELECT id FROM clinics)
+  `;
+  for (const p of orphanedPatients) {
+    const match = /^clinic_(\d+)$/.exec(p.clinic_id as string);
+    if (match) {
+      const doctorId = Number(match[1]);
+      const [activeClinic] = await sql`
+        SELECT id FROM clinics WHERE owner_id = ${doctorId} ORDER BY created_at LIMIT 1
+      `;
+      if (activeClinic) {
+        await sql`UPDATE patients SET clinic_id = ${activeClinic.id} WHERE clinic_id = ${p.clinic_id}`;
+        console.log(`[migration] Re-pointed patients from ${p.clinic_id} → ${activeClinic.id}`);
+      }
+    }
+  }
+
   console.log('✅ DB migrations complete');
 }
 

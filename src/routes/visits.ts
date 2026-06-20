@@ -8,9 +8,15 @@ router.use(requireAuth);
 // ─── All visits for a patient ─────────────────────────────────────────────────
 
 router.get('/patient/:patientId', async (req: Request, res: Response) => {
+  const userId = req.user!.userId;
+  const clinicId = req.user!.clinicId;
   const visits = await sql`
     SELECT * FROM visits
-    WHERE patient_id = ${req.params.patientId} AND clinic_id = ${req.user!.clinicId}
+    WHERE patient_id = ${req.params.patientId}
+      AND (
+        clinic_id IN (SELECT id FROM clinics WHERE owner_id = ${userId})
+        OR clinic_id = ${clinicId}
+      )
     ORDER BY date DESC, created_at DESC
   `;
   // Merge `data` JSONB fields into the row for compatibility with frontend.
@@ -30,10 +36,19 @@ router.get('/patient/:patientId', async (req: Request, res: Response) => {
 
 router.get('/clinic', async (req: Request, res: Response) => {
   const { date } = req.query;
+  const userId = req.user!.userId;
   const clinicId = req.user!.clinicId;
   const visits = date
-    ? await sql`SELECT * FROM visits WHERE clinic_id = ${clinicId} AND date = ${date as string} ORDER BY created_at DESC`
-    : await sql`SELECT * FROM visits WHERE clinic_id = ${clinicId} ORDER BY date DESC, created_at DESC LIMIT 200`;
+    ? await sql`
+        SELECT * FROM visits
+        WHERE (clinic_id IN (SELECT id FROM clinics WHERE owner_id = ${userId}) OR clinic_id = ${clinicId})
+          AND date = ${date as string}
+        ORDER BY created_at DESC`
+    : await sql`
+        SELECT * FROM visits
+        WHERE clinic_id IN (SELECT id FROM clinics WHERE owner_id = ${userId})
+           OR clinic_id = ${clinicId}
+        ORDER BY date DESC, created_at DESC LIMIT 200`;
   // Map snake_case DB fields to camelCase for frontend
   const result = visits.map(v => ({
     ...((v.data as Record<string, unknown>) ?? {}),

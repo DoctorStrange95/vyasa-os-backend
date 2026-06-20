@@ -47,21 +47,31 @@ function mapPatient(p: Record<string, unknown>): Record<string, unknown> {
 // ─── List patients for clinic ─────────────────────────────────────────────────
 
 router.get('/', async (req: Request, res: Response) => {
-  const clinicId = req.user!.clinicId;
+  const userId = req.user!.userId;
+  const jwtClinicId = req.user!.clinicId;
   const rows = await sql`
-    SELECT * FROM patients WHERE clinic_id = ${clinicId}
+    SELECT * FROM patients
+    WHERE clinic_id IN (SELECT id FROM clinics WHERE owner_id = ${userId})
+       OR clinic_id = ${jwtClinicId}
     ORDER BY created_at DESC
   `;
   const patients = rows.map(mapPatient);
-  auditFromReq(req, 'patient.read', 'patients', clinicId, { count: patients.length });
+  auditFromReq(req, 'patient.read', 'patients', jwtClinicId, { count: patients.length });
   res.json(patients);
 });
 
 // ─── Single patient ───────────────────────────────────────────────────────────
 
 router.get('/:id', async (req: Request, res: Response) => {
+  const userId = req.user!.userId;
+  const jwtClinicId = req.user!.clinicId;
   const [p] = await sql`
-    SELECT * FROM patients WHERE id = ${req.params.id} AND clinic_id = ${req.user!.clinicId}
+    SELECT * FROM patients
+    WHERE id = ${req.params.id}
+      AND (
+        clinic_id IN (SELECT id FROM clinics WHERE owner_id = ${userId})
+        OR clinic_id = ${jwtClinicId}
+      )
   `;
   if (!p) { res.status(404).json({ error: 'Patient not found' }); return; }
   auditFromReq(req, 'patient.read', 'patient', req.params.id);
@@ -175,8 +185,14 @@ router.patch('/:id', async (req: Request, res: Response) => {
 // ─── Delete patient ───────────────────────────────────────────────────────────
 
 router.delete('/:id', async (req: Request, res: Response) => {
+  const userId = req.user!.userId;
+  const jwtClinicId = req.user!.clinicId;
   await sql`
-    DELETE FROM patients WHERE id = ${req.params.id} AND clinic_id = ${req.user!.clinicId}
+    DELETE FROM patients WHERE id = ${req.params.id}
+      AND (
+        clinic_id IN (SELECT id FROM clinics WHERE owner_id = ${userId})
+        OR clinic_id = ${jwtClinicId}
+      )
   `;
   auditFromReq(req, 'patient.delete', 'patient', req.params.id);
   res.json({ ok: true });
