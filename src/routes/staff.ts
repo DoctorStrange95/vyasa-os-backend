@@ -11,30 +11,36 @@ router.use(requireAuth);
 // (Staff with no invited_clinic_ids at all are also shown so legacy invites
 // aren't lost — but staff invited to someone else's clinic are hidden.)
 router.get('/pending', async (req: Request, res: Response) => {
-  const clinics = await sql`SELECT id FROM clinics WHERE owner_id = ${req.user!.userId}`;
+  const userId = req.user!.userId;
+
+  const clinics = await sql`SELECT id FROM clinics WHERE owner_id = ${userId}`;
   let myClinicIds = clinics.map(c => c.id as string);
 
-  // Fallback: if no clinics found in clinics table, use the clinic_id from the user's own record
-  // (handles doctors who never synced their local padStore clinics to the backend)
+  // Fallback: use clinic_id from users table if clinics table has no rows for this doctor
   if (myClinicIds.length === 0) {
-    const [doctor] = await sql`SELECT clinic_id FROM users WHERE id = ${req.user!.userId}`;
+    const [doctor] = await sql`SELECT clinic_id FROM users WHERE id = ${userId}`;
     if (doctor?.clinic_id) myClinicIds = [doctor.clinic_id as string];
   }
 
   const pending = await sql`
     SELECT id, name, email, phone, role, degrees, specialty,
-           invited_clinic_ids, invited_clinic_name, created_at
+           invited_clinic_ids, invited_clinic_name, invited_by_user_id, created_at
     FROM users
     WHERE approval_status = 'pending'
       AND role NOT IN ('clinic_admin', 'superadmin', 'patient')
     ORDER BY created_at DESC
   `;
   const scoped = pending.filter(p => {
-    // decodeURIComponent handles the case where the invite link was double-encoded
-    // (e.g. shared via WhatsApp converting %2C → %252C, making split(',') fail)
+    // Primary match: invited_by_user_id — set when staff registers via invite link
+    // that includes ?did=doctorId. Most reliable across all role types.
+    if (p.invited_by_user_id != null) {
+      return (p.invited_by_user_id as number) === userId;
+    }
+    // Fallback: match by clinic IDs (older registrations without invited_by_user_id)
+    // decodeURIComponent handles links that were double-encoded by WhatsApp/email
     const raw = decodeURIComponent((p.invited_clinic_ids as string | null) ?? '');
     const invited = raw.split(',').map(s => s.trim()).filter(Boolean);
-    if (invited.length === 0) return true; // legacy registration with no invite metadata
+    if (invited.length === 0) return true; // legacy: no invite metadata → show to all
     return myClinicIds.length === 0 || invited.some(id => myClinicIds.includes(id));
   });
   res.json(scoped);

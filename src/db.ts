@@ -217,6 +217,8 @@ export async function runMigrations() {
   await sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS invited_clinic_ids TEXT`;
   // Store invited clinic display name(s) for reference
   await sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS invited_clinic_name TEXT`;
+  // Store the user ID of the doctor who generated the invite link — primary match key
+  await sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS invited_by_user_id INTEGER REFERENCES users(id)`;
 
   // Backfill: create a clinic record for any clinic_admin who has a clinic_id but no row in clinics
   const orphanDoctors = await sql`
