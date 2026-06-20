@@ -74,6 +74,18 @@ router.delete('/:id', async (req: Request, res: Response) => {
     RETURNING id
   `;
   if (!row) { res.status(404).json({ error: 'Clinic not found' }); return; }
+
+  // If the deleted clinic was the doctor's primary clinic_id, point it to another
+  // clinic they own, or null. Without this, the db.ts backfill migration recreates
+  // the deleted clinic every time the backend restarts.
+  const [next] = await sql`
+    SELECT id FROM clinics WHERE owner_id = ${req.user!.userId} LIMIT 1
+  `;
+  await sql`
+    UPDATE users SET clinic_id = ${next?.id ?? null}
+    WHERE id = ${req.user!.userId} AND clinic_id = ${req.params.id}
+  `;
+
   res.status(204).end();
 });
 

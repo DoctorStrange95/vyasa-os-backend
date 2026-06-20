@@ -220,7 +220,10 @@ export async function runMigrations() {
   // Store the user ID of the doctor who generated the invite link — primary match key
   await sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS invited_by_user_id INTEGER REFERENCES users(id)`;
 
-  // Backfill: create a clinic record for any clinic_admin who has a clinic_id but no row in clinics
+  // Backfill: repair clinic_id pointer when the referenced clinic no longer exists
+  // but the doctor still has OTHER clinics — just point to the first remaining one.
+  // We do NOT recreate a deleted clinic; if the doctor intentionally deleted it,
+  // the delete route already updated clinic_id to null or another clinic.
   const orphanDoctors = await sql`
     SELECT u.id, u.name, u.clinic_id
     FROM users u
@@ -230,11 +233,13 @@ export async function runMigrations() {
       AND c.id IS NULL
   `;
   for (const doc of orphanDoctors) {
-    await sql`
-      INSERT INTO clinics (id, owner_id, name, address, fee, max_patients)
-      VALUES (${doc.clinic_id}, ${doc.id}, ${doc.name + "'s Clinic"}, '', 200, 30)
-      ON CONFLICT DO NOTHING
-    `;
+    // Check if they have any other clinic we can point to
+    const [existing] = await sql`SELECT id FROM clinics WHERE owner_id = ${doc.id} LIMIT 1`;
+    if (existing) {
+      // Just fix the pointer — don't recreate a deleted clinic
+      await sql`UPDATE users SET clinic_id = ${existing.id} WHERE id = ${doc.id}`;
+    }
+    // If no clinics at all, leave clinic_id as-is (will be handled by the next backfill below)
   }
 
   // Backfill: assign a clinic_id to clinic_admin users who have none at all
