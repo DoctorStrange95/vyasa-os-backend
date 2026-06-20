@@ -407,6 +407,7 @@ router.get('/doctors/featured', async (req: Request, res: Response) => {
         AND u.approval_status = 'approved'
         AND u.profile_slug IS NOT NULL
         AND u.show_in_directory IS NOT false
+        AND u.profile_photo_url IS NOT NULL AND u.profile_photo_url != ''
       ORDER BY
         u.is_featured DESC NULLS LAST,
         score DESC
@@ -546,16 +547,22 @@ const APP_ORIGIN = 'https://app.vyasaa.com';
 router.get('/sitemap.xml', async (_req: Request, res: Response) => {
   try {
     const rows = await sql`
-      SELECT profile_slug FROM users
+      SELECT profile_slug, updated_at FROM users
       WHERE public_profile_enabled = true
         AND approval_status = 'approved'
+        AND show_in_directory IS NOT false
         AND profile_slug IS NOT NULL AND profile_slug != ''
-      ORDER BY profile_slug
+      ORDER BY is_featured DESC NULLS LAST, created_at DESC
     `;
-    const urls = rows
-      .map(r => `  <url>\n    <loc>${APP_ORIGIN}/dr/${encodeURIComponent(r.profile_slug as string)}</loc>\n    <changefreq>weekly</changefreq>\n    <priority>0.8</priority>\n  </url>`)
-      .join('\n');
-    const xml = `<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n${urls}\n</urlset>\n`;
+    const today = new Date().toISOString().slice(0, 10);
+    const staticUrls = [
+      `  <url>\n    <loc>${APP_ORIGIN}/doctors</loc>\n    <changefreq>daily</changefreq>\n    <priority>0.9</priority>\n    <lastmod>${today}</lastmod>\n  </url>`,
+    ];
+    const doctorUrls = rows.map(r => {
+      const lastmod = r.updated_at ? new Date(r.updated_at as string).toISOString().slice(0, 10) : today;
+      return `  <url>\n    <loc>${APP_ORIGIN}/dr/${encodeURIComponent(r.profile_slug as string)}</loc>\n    <changefreq>weekly</changefreq>\n    <priority>0.8</priority>\n    <lastmod>${lastmod}</lastmod>\n  </url>`;
+    });
+    const xml = `<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n${[...staticUrls, ...doctorUrls].join('\n')}\n</urlset>\n`;
     res.set('Content-Type', 'application/xml; charset=utf-8');
     res.set('Cache-Control', 'public, max-age=3600');
     res.send(xml);
