@@ -49,6 +49,7 @@ router.get('/doctor/:slug', async (req: Request, res: Response) => {
     const rows = await sql`
       SELECT u.id, u.name, u.specialty, u.degrees,
              CASE WHEN u.show_reg_number = true THEN COALESCE(u.reg_number, u.license_number, p.reg_number) ELSE '' END AS reg_number,
+             (COALESCE(u.reg_number, u.license_number, p.reg_number) IS NOT NULL AND COALESCE(u.reg_number, u.license_number, p.reg_number) != '') AS nmc_verified,
              u.bio, u.languages, u.accepting_patients, u.gbp_url,
              u.years_experience, u.consultation_fee, u.profile_slug,
              u.public_profile_enabled, u.profile_photo_url, u.clinic_id,
@@ -88,6 +89,7 @@ router.get('/doctor/:slug', async (req: Request, res: Response) => {
       specialty: r.specialty || '',
       qualification: r.degrees || '',
       regNumber: r.reg_number || '',
+      nmcVerified: r.nmc_verified === true,
       bio: r.bio || '',
       languages: r.languages || '',
       acceptingPatients: r.accepting_patients !== false,
