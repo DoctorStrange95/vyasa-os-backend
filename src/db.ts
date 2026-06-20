@@ -587,6 +587,9 @@ export async function runMigrations() {
       )
   `;
 
+  // consent_given_at: timestamp when user explicitly accepted Privacy Policy & Terms
+  await sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS consent_given_at TIMESTAMPTZ`;
+
   console.log('✅ DB migrations complete');
 }
 

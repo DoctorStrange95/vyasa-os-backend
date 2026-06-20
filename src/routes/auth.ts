@@ -168,7 +168,7 @@ router.post('/login', async (req: Request, res: Response) => {
   const { email, password, lat, lng, locationLabel } = parsed.data;
 
   const [user] = await sql`
-    SELECT id, name, email, role, password_hash, specialty, degrees, phone, clinic_id, approval_status
+    SELECT id, name, email, role, password_hash, specialty, degrees, phone, clinic_id, approval_status, consent_given_at
     FROM users WHERE email = ${email}
   `;
   if (!user) {
@@ -212,7 +212,7 @@ router.post('/login', async (req: Request, res: Response) => {
   res.json({
     accessToken,
     refreshToken,
-    user: { id: user.id, name: user.name, email: user.email, role: user.role, clinicId: user.clinic_id, specialty: user.specialty, degrees: user.degrees, approvalStatus: user.approval_status },
+    user: { id: user.id, name: user.name, email: user.email, role: user.role, clinicId: user.clinic_id, specialty: user.specialty, degrees: user.degrees, approvalStatus: user.approval_status, consentGivenAt: user.consent_given_at ?? null },
   });
 });
 
@@ -257,6 +257,14 @@ router.post('/logout', async (req: Request, res: Response) => {
     await sql`DELETE FROM refresh_tokens WHERE token = ${refreshToken}`;
   }
   res.json({ ok: true });
+});
+
+// ─── Record user consent to Privacy Policy & Terms ──────────────────────────
+
+router.post('/consent', requireAuth, async (req: Request, res: Response) => {
+  const userId = req.user!.userId;
+  await sql`UPDATE users SET consent_given_at = NOW() WHERE id = ${userId} AND consent_given_at IS NULL`;
+  res.json({ ok: true, consentGivenAt: new Date().toISOString() });
 });
 
 // ─── Me ──────────────────────────────────────────────────────────────────────
