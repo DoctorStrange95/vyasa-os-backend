@@ -590,6 +590,29 @@ export async function runMigrations() {
   // consent_given_at: timestamp when user explicitly accepted Privacy Policy & Terms
   await sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS consent_given_at TIMESTAMPTZ`;
 
+  // prescriptions: individual medication records per patient per date
+  await sql`
+    CREATE TABLE IF NOT EXISTS prescriptions (
+      id TEXT PRIMARY KEY,
+      patient_id TEXT NOT NULL,
+      visit_id TEXT,
+      clinic_id TEXT NOT NULL,
+      doctor_id INTEGER,
+      doctor_name TEXT,
+      drug TEXT NOT NULL,
+      dose TEXT,
+      route TEXT,
+      frequency TEXT,
+      duration TEXT,
+      instructions TEXT,
+      status TEXT NOT NULL DEFAULT 'active',
+      prescribed_at TEXT NOT NULL,
+      created_at TIMESTAMPTZ DEFAULT NOW()
+    )
+  `;
+  await sql`CREATE INDEX IF NOT EXISTS idx_rx_patient ON prescriptions(patient_id)`;
+  await sql`CREATE INDEX IF NOT EXISTS idx_rx_visit ON prescriptions(visit_id)`;
+
   console.log('✅ DB migrations complete');
 }
 
