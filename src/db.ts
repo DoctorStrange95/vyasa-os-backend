@@ -666,6 +666,21 @@ export async function runMigrations() {
   // doctor_id on visits — added after initial table creation for solo-practice visit filtering
   await sql`ALTER TABLE visits ADD COLUMN IF NOT EXISTS doctor_id INTEGER`;
 
+  await sql`
+    CREATE TABLE IF NOT EXISTS email_logs (
+      id SERIAL PRIMARY KEY,
+      sent_by INTEGER REFERENCES users(id),
+      recipient_id INTEGER,
+      recipient_email TEXT NOT NULL,
+      recipient_name TEXT NOT NULL,
+      template_name TEXT NOT NULL,
+      subject TEXT NOT NULL,
+      sent_at TIMESTAMPTZ DEFAULT NOW()
+    )
+  `;
+  await sql`CREATE INDEX IF NOT EXISTS idx_email_logs_recipient ON email_logs(recipient_id)`;
+  await sql`CREATE INDEX IF NOT EXISTS idx_email_logs_sent_at ON email_logs(sent_at DESC)`;
+
   console.log('✅ DB migrations complete');
 }
 

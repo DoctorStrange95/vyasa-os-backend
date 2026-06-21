@@ -205,6 +205,31 @@ router.patch('/doctors/:id/directory', async (req: Request, res: Response) => {
   res.json({ ok: true, show });
 });
 
+// ─── Email logs ──────────────────────────────────────────────────────────────
+
+router.post('/email-logs', async (req: Request, res: Response) => {
+  const { recipient_id, recipient_email, recipient_name, template_name, subject } = req.body;
+  if (!recipient_email || !recipient_name || !template_name || !subject) {
+    res.status(400).json({ error: 'Missing required fields' });
+    return;
+  }
+  await sql`
+    INSERT INTO email_logs (sent_by, recipient_id, recipient_email, recipient_name, template_name, subject)
+    VALUES (${req.user!.userId}, ${recipient_id ?? null}, ${recipient_email}, ${recipient_name}, ${template_name}, ${subject})
+  `;
+  res.json({ ok: true });
+});
+
+router.get('/email-logs', async (_req: Request, res: Response) => {
+  const rows = await sql`
+    SELECT id, recipient_id, recipient_email, recipient_name, template_name, subject, sent_at
+    FROM email_logs
+    ORDER BY sent_at DESC
+    LIMIT 500
+  `;
+  res.json(rows);
+});
+
 // ─── Clinic-scoped audit log (doctor sees their own clinic's log) ─────────────
 
 export async function getClinicAuditLog(req: Request, res: Response) {
