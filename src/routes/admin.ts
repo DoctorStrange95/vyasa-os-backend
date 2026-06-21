@@ -223,6 +223,22 @@ router.get('/funnel', async (_req: Request, res: Response) => {
   res.json({ events, successful_logins: Number(logins[0]?.count ?? 0) });
 });
 
+router.get('/login-attempts', async (_req: Request, res: Response) => {
+  const rows = await sql`
+    SELECT
+      metadata->>'email' AS email,
+      metadata->>'method' AS method,
+      metadata->>'status' AS status,
+      created_at
+    FROM page_events
+    WHERE event_type = 'login_attempt'
+      AND metadata->>'email' IS NOT NULL
+    ORDER BY created_at DESC
+    LIMIT 100
+  `;
+  res.json(rows);
+});
+
 router.get('/failed-logins', async (_req: Request, res: Response) => {
   const rows = await sql`
     SELECT
