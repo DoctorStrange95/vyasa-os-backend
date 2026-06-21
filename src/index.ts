@@ -26,6 +26,7 @@ import publicRouter from './routes/public';
 import orgRouter from './routes/org';
 import prescriptionsRouter from './routes/prescriptions';
 import labsRouter from './routes/labs';
+import dischargeRouter from './routes/discharge';
 import { AuthPayload } from './middleware/auth';
 
 const app = express();
@@ -261,6 +262,7 @@ app.use('/public', publicRouter);
 app.use('/org', orgRouter);
 app.use('/prescriptions', prescriptionsRouter);
 app.use('/labs', labsRouter);
+app.use('/discharge', dischargeRouter);
 
 app.get('/health', (_req, res) => {
   res.json({ status: 'ok', time: new Date().toISOString() });

@@ -638,6 +638,31 @@ export async function runMigrations() {
   await sql`CREATE INDEX IF NOT EXISTS idx_labs_patient ON lab_orders(patient_id)`;
   await sql`CREATE INDEX IF NOT EXISTS idx_labs_clinic ON lab_orders(clinic_id)`;
 
+  // discharge_summaries: full structured discharge record for IPD patients
+  await sql`
+    CREATE TABLE IF NOT EXISTS discharge_summaries (
+      id TEXT PRIMARY KEY,
+      patient_id TEXT NOT NULL,
+      clinic_id TEXT NOT NULL,
+      doctor_id INTEGER,
+      admit_date TEXT,
+      discharge_date TEXT NOT NULL,
+      discharge_type TEXT NOT NULL,
+      final_diagnosis TEXT,
+      condition_at_discharge TEXT,
+      treatment_summary TEXT,
+      procedures_done TEXT,
+      instructions TEXT,
+      referred_to TEXT,
+      follow_up TEXT,
+      ward TEXT,
+      bed TEXT,
+      data JSONB DEFAULT '{}',
+      created_at TIMESTAMPTZ DEFAULT NOW()
+    )
+  `;
+  await sql`CREATE INDEX IF NOT EXISTS idx_discharge_patient ON discharge_summaries(patient_id)`;
+
   console.log('✅ DB migrations complete');
 }
 
