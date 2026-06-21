@@ -613,6 +613,31 @@ export async function runMigrations() {
   await sql`CREATE INDEX IF NOT EXISTS idx_rx_patient ON prescriptions(patient_id)`;
   await sql`CREATE INDEX IF NOT EXISTS idx_rx_visit ON prescriptions(visit_id)`;
 
+  // lab_orders: investigations ordered per patient
+  await sql`
+    CREATE TABLE IF NOT EXISTS lab_orders (
+      id TEXT PRIMARY KEY,
+      patient_id TEXT NOT NULL,
+      clinic_id TEXT NOT NULL,
+      doctor_id INTEGER,
+      test_name TEXT NOT NULL,
+      panel TEXT,
+      ordered_by TEXT,
+      ordered_at TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'ordered',
+      urgency TEXT,
+      result TEXT,
+      unit TEXT,
+      ref_range TEXT,
+      critical BOOLEAN DEFAULT false,
+      result_time TEXT,
+      report_data_url TEXT,
+      created_at TIMESTAMPTZ DEFAULT NOW()
+    )
+  `;
+  await sql`CREATE INDEX IF NOT EXISTS idx_labs_patient ON lab_orders(patient_id)`;
+  await sql`CREATE INDEX IF NOT EXISTS idx_labs_clinic ON lab_orders(clinic_id)`;
+
   console.log('✅ DB migrations complete');
 }
 
