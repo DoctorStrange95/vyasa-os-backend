@@ -177,10 +177,12 @@ router.get('/doctors/overview', async (_req: Request, res: Response) => {
         SUM(CASE WHEN status = 'pending'   THEN 1 ELSE 0 END)            AS pending_bookings
       FROM booking_requests GROUP BY doctor_id
     ) br ON br.doctor_id = u.id
-    LEFT JOIN (
-      SELECT doctor_id, COUNT(*) AS total_visits
-      FROM visits GROUP BY doctor_id
-    ) v ON v.doctor_id = u.id
+    LEFT JOIN LATERAL (
+      SELECT COUNT(*) AS total_visits
+      FROM visits
+      WHERE doctor_id = u.id
+         OR (doctor_id IS NULL AND LOWER(doctor_name) = LOWER(u.name))
+    ) v ON true
     LEFT JOIN (
       SELECT attending_doctor_id, COUNT(DISTINCT id) AS total_patients
       FROM patients WHERE attending_doctor_id IS NOT NULL
