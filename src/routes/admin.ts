@@ -205,6 +205,37 @@ router.patch('/doctors/:id/directory', async (req: Request, res: Response) => {
   res.json({ ok: true, show });
 });
 
+// ─── Recent logins with geo ──────────────────────────────────────────────────
+
+router.get('/recent-logins', async (_req: Request, res: Response) => {
+  const rows = await sql`
+    SELECT
+      u.id, u.name, u.email, u.specialty, u.city, u.state,
+      ls.logged_in_at, ls.ip_address, ls.location_label, ls.lat, ls.lng, ls.user_agent
+    FROM login_sessions ls
+    JOIN users u ON u.id = ls.user_id
+    ORDER BY ls.logged_in_at DESC
+    LIMIT 100
+  `;
+  res.json(rows);
+});
+
+router.get('/geo-summary', async (_req: Request, res: Response) => {
+  const byCityState = await sql`
+    SELECT
+      COALESCE(ls.location_label, u.city, 'Unknown') AS location,
+      u.state,
+      COUNT(*) AS login_count,
+      COUNT(DISTINCT u.id) AS unique_doctors
+    FROM login_sessions ls
+    JOIN users u ON u.id = ls.user_id
+    GROUP BY COALESCE(ls.location_label, u.city, 'Unknown'), u.state
+    ORDER BY login_count DESC
+    LIMIT 20
+  `;
+  res.json(byCityState);
+});
+
 // ─── Email logs ──────────────────────────────────────────────────────────────
 
 router.post('/email-logs', async (req: Request, res: Response) => {
