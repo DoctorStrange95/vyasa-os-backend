@@ -205,6 +205,22 @@ router.patch('/doctors/:id/directory', async (req: Request, res: Response) => {
   res.json({ ok: true, show });
 });
 
+// ─── Login funnel analytics ──────────────────────────────────────────────────
+
+router.get('/funnel', async (_req: Request, res: Response) => {
+  const [events, logins] = await Promise.all([
+    sql`
+      SELECT event_type, COUNT(*) AS count
+      FROM page_events
+      WHERE created_at > NOW() - INTERVAL '30 days'
+      GROUP BY event_type
+      ORDER BY count DESC
+    `,
+    sql`SELECT COUNT(*) AS count FROM login_sessions WHERE logged_in_at > NOW() - INTERVAL '30 days'`,
+  ]);
+  res.json({ events, successful_logins: Number(logins[0]?.count ?? 0) });
+});
+
 // ─── Recent logins with geo ──────────────────────────────────────────────────
 
 router.get('/recent-logins', async (_req: Request, res: Response) => {

@@ -681,6 +681,18 @@ export async function runMigrations() {
   await sql`CREATE INDEX IF NOT EXISTS idx_email_logs_recipient ON email_logs(recipient_id)`;
   await sql`CREATE INDEX IF NOT EXISTS idx_email_logs_sent_at ON email_logs(sent_at DESC)`;
 
+  await sql`
+    CREATE TABLE IF NOT EXISTS page_events (
+      id SERIAL PRIMARY KEY,
+      event_type TEXT NOT NULL,
+      metadata JSONB DEFAULT '{}',
+      ip_address TEXT,
+      user_agent TEXT,
+      created_at TIMESTAMPTZ DEFAULT NOW()
+    )
+  `;
+  await sql`CREATE INDEX IF NOT EXISTS idx_page_events_type_time ON page_events(event_type, created_at DESC)`;
+
   console.log('✅ DB migrations complete');
 }
 
