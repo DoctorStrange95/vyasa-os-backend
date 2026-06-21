@@ -233,7 +233,7 @@ app.post('/auth/google', async (req, res) => {
 
     res.json({
       accessToken, refreshToken,
-      user: { id: existing.id, name: existing.name, email: existing.email, role: existing.role, clinicId: existing.clinic_id, approvalStatus: existing.approval_status },
+      user: { id: existing.id, name: existing.name, email: existing.email, role: existing.role, clinicId: existing.clinic_id, approvalStatus: existing.approval_status, consentGivenAt: (existing.consent_given_at as Date | null) ?? null },
       googlePicture,
       isNewUser: false,
     });
