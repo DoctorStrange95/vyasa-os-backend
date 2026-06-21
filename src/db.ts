@@ -663,6 +663,9 @@ export async function runMigrations() {
   `;
   await sql`CREATE INDEX IF NOT EXISTS idx_discharge_patient ON discharge_summaries(patient_id)`;
 
+  // doctor_id on visits — added after initial table creation for solo-practice visit filtering
+  await sql`ALTER TABLE visits ADD COLUMN IF NOT EXISTS doctor_id INTEGER`;
+
   console.log('✅ DB migrations complete');
 }
 
