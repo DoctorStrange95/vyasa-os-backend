@@ -561,7 +561,7 @@ app.post('/api/events', async (req, res) => {
 // ─── Email Service ────────────────────────────────────────────────────────────
 
 app.post('/api/send-email', async (req, res) => {
-  const { to, subject, body, templateName } = req.body;
+  const { to, subject, body, templateName, bcc } = req.body;
 
   if (!to || !subject || !body) {
     return res.status(400).json({ error: 'Missing required fields' });
@@ -575,6 +575,11 @@ app.post('/api/send-email', async (req, res) => {
       return res.json({ success: false, message: 'Email service not configured' });
     }
 
+    // Build BCC list from comma-separated string (if provided)
+    const bccList = bcc
+      ? String(bcc).split(',').map((e: string) => e.trim()).filter(Boolean).map((email: string) => ({ email }))
+      : undefined;
+
     // Send via Brevo HTTP API
     const response = await fetch('https://api.brevo.com/v3/smtp/email', {
       method: 'POST',
@@ -585,6 +590,7 @@ app.post('/api/send-email', async (req, res) => {
       body: JSON.stringify({
         to: [{ email: to }],
         sender: { email: 'support@vyasaa.com', name: 'Vyasa Health' },
+        ...(bccList?.length ? { bcc: bccList } : {}),
         subject,
         htmlContent: body.replace(/\n/g, '<br>'),
       }),
