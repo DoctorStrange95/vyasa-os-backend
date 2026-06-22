@@ -17,6 +17,7 @@ const RegisterSchema = z.object({
   degrees: z.string().optional(),
   phone: z.string().optional(),
   licenseNumber: z.string().optional(),
+  medicalCouncil: z.string().optional(),
   regState: z.string().optional(),
   state: z.string().optional(),
   city: z.string().optional(),
@@ -63,7 +64,7 @@ router.post('/register', async (req: Request, res: Response) => {
     res.status(400).json({ error: parsed.error.issues[0].message });
     return;
   }
-  const { name, email, password, role, specialty, degrees, phone, licenseNumber, regState, state, city, googleId, clinicIds, clinicName: invitedClinicName, invitedByUserId } = parsed.data;
+  const { name, email, password, role, specialty, degrees, phone, licenseNumber, medicalCouncil, regState, state, city, googleId, clinicIds, clinicName: invitedClinicName, invitedByUserId } = parsed.data;
 
   // Check existing
   const existing = await sql`SELECT id FROM users WHERE email = ${email}`;
@@ -79,9 +80,9 @@ router.post('/register', async (req: Request, res: Response) => {
 
   // Insert user
   const [user] = await sql`
-    INSERT INTO users (name, email, password_hash, role, specialty, degrees, phone, license_number, reg_state, state, city, google_id, approval_status, invited_clinic_ids, invited_clinic_name, invited_by_user_id)
+    INSERT INTO users (name, email, password_hash, role, specialty, degrees, phone, license_number, medical_council, reg_state, state, city, google_id, approval_status, invited_clinic_ids, invited_clinic_name, invited_by_user_id)
     VALUES (${name}, ${email}, ${passwordHash}, ${effectiveRole}, ${specialty ?? null}, ${degrees ?? null}, ${phone ?? null},
-            ${licenseNumber ?? null}, ${regState ?? null}, ${state ?? null}, ${city ?? null}, ${googleId ?? null}, ${approvalStatus},
+            ${licenseNumber ?? null}, ${medicalCouncil ?? null}, ${regState ?? null}, ${state ?? null}, ${city ?? null}, ${googleId ?? null}, ${approvalStatus},
             ${clinicIds ?? null}, ${invitedClinicName ?? null}, ${invitedByUserId ?? null})
     RETURNING id, name, email, role, specialty, degrees, phone, clinic_id, approval_status
   `;

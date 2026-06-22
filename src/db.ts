@@ -590,6 +590,9 @@ export async function runMigrations() {
   // consent_given_at: timestamp when user explicitly accepted Privacy Policy & Terms
   await sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS consent_given_at TIMESTAMPTZ`;
 
+  // medical_council: name of the council the doctor is registered with (NMC, CCIM, DCI, etc.)
+  await sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS medical_council TEXT DEFAULT ''`;
+
   // prescriptions: individual medication records per patient per date
   await sql`
     CREATE TABLE IF NOT EXISTS prescriptions (

@@ -21,7 +21,8 @@ router.use(requireSuperAdmin);
 router.get('/users', async (_req: Request, res: Response) => {
   const users = await sql`
     SELECT u.id, u.name, u.email, u.role, u.specialty, u.degrees, u.phone,
-           u.reg_number, u.license_number, u.state, u.city, u.profile_slug,
+           u.reg_number, u.license_number, u.medical_council, u.reg_state,
+           u.state, u.city, u.profile_slug,
            u.approval_status, u.rejection_reason, u.created_at,
            ls.last_login, COALESCE(ls.login_count, 0) AS login_count
     FROM users u
