@@ -66,26 +66,45 @@ router.post('/register', async (req: Request, res: Response) => {
   }
   const { name, email, password, role, specialty, degrees, phone, licenseNumber, medicalCouncil, regState, state, city, googleId, clinicIds, clinicName: invitedClinicName, invitedByUserId } = parsed.data;
 
-  // Check existing
-  const existing = await sql`SELECT id FROM users WHERE email = ${email}`;
-  if (existing.length > 0) {
-    res.status(409).json({ error: 'Email already registered' });
-    return;
-  }
-
   const passwordHash = await bcrypt.hash(password, 12);
   const effectiveRole = role ?? 'clinic_admin';
   // Superadmins are auto-approved; all others start as pending until license verified
   const approvalStatus = effectiveRole === 'superadmin' ? 'approved' : 'pending';
 
-  // Insert user
-  const [user] = await sql`
-    INSERT INTO users (name, email, password_hash, role, specialty, degrees, phone, license_number, medical_council, reg_state, state, city, google_id, approval_status, invited_clinic_ids, invited_clinic_name, invited_by_user_id)
-    VALUES (${name}, ${email}, ${passwordHash}, ${effectiveRole}, ${specialty ?? null}, ${degrees ?? null}, ${phone ?? null},
-            ${licenseNumber ?? null}, ${medicalCouncil ?? null}, ${regState ?? null}, ${state ?? null}, ${city ?? null}, ${googleId ?? null}, ${approvalStatus},
-            ${clinicIds ?? null}, ${invitedClinicName ?? null}, ${invitedByUserId ?? null})
-    RETURNING id, name, email, role, specialty, degrees, phone, clinic_id, approval_status
-  `;
+  // Check existing. A previously REJECTED account is allowed to reapply — we
+  // reuse the same row (overwriting it with the new application and resetting
+  // to pending) instead of deleting, which avoids any foreign-key issues.
+  // Active / pending / blocked (suspended) accounts still cannot re-register.
+  const [existing] = await sql`SELECT id, approval_status FROM users WHERE email = ${email}`;
+  if (existing && existing.approval_status !== 'rejected') {
+    res.status(409).json({ error: 'Email already registered' });
+    return;
+  }
+
+  let user;
+  if (existing) {
+    // Re-application of a rejected doctor — refresh their record back to pending
+    [user] = await sql`
+      UPDATE users SET
+        name = ${name}, password_hash = ${passwordHash}, role = ${effectiveRole},
+        specialty = ${specialty ?? null}, degrees = ${degrees ?? null}, phone = ${phone ?? null},
+        license_number = ${licenseNumber ?? null}, medical_council = ${medicalCouncil ?? null},
+        reg_state = ${regState ?? null}, state = ${state ?? null}, city = ${city ?? null},
+        google_id = ${googleId ?? null}, approval_status = ${approvalStatus}, rejection_reason = NULL,
+        invited_clinic_ids = ${clinicIds ?? null}, invited_clinic_name = ${invitedClinicName ?? null},
+        invited_by_user_id = ${invitedByUserId ?? null}, created_at = NOW()
+      WHERE id = ${existing.id}
+      RETURNING id, name, email, role, specialty, degrees, phone, clinic_id, approval_status
+    `;
+  } else {
+    [user] = await sql`
+      INSERT INTO users (name, email, password_hash, role, specialty, degrees, phone, license_number, medical_council, reg_state, state, city, google_id, approval_status, invited_clinic_ids, invited_clinic_name, invited_by_user_id)
+      VALUES (${name}, ${email}, ${passwordHash}, ${effectiveRole}, ${specialty ?? null}, ${degrees ?? null}, ${phone ?? null},
+              ${licenseNumber ?? null}, ${medicalCouncil ?? null}, ${regState ?? null}, ${state ?? null}, ${city ?? null}, ${googleId ?? null}, ${approvalStatus},
+              ${clinicIds ?? null}, ${invitedClinicName ?? null}, ${invitedByUserId ?? null})
+      RETURNING id, name, email, role, specialty, degrees, phone, clinic_id, approval_status
+    `;
+  }
 
   // Auto-create a default clinic for clinic_admin
   let clinicId = user.clinic_id as string | null;
