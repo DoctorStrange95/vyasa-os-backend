@@ -101,6 +101,20 @@ router.post('/users/:id/suspend', async (req: Request, res: Response) => {
   res.json({ ok: true });
 });
 
+// ─── Block / Unblock a user (superadmin) ─────────────────────────────────────
+// Block = set 'suspended' (prevents login). Unblock = restore to 'approved'.
+router.post('/users/:id/block', async (req: Request, res: Response) => {
+  if (req.user!.role !== 'superadmin') { res.status(403).json({ error: 'Forbidden' }); return; }
+  await sql`UPDATE users SET approval_status = 'suspended' WHERE id = ${req.params.id}`;
+  res.json({ ok: true, status: 'suspended' });
+});
+
+router.post('/users/:id/unblock', async (req: Request, res: Response) => {
+  if (req.user!.role !== 'superadmin') { res.status(403).json({ error: 'Forbidden' }); return; }
+  await sql`UPDATE users SET approval_status = 'approved' WHERE id = ${req.params.id}`;
+  res.json({ ok: true, status: 'approved' });
+});
+
 // ─── Analytics ───────────────────────────────────────────────────────────────
 
 router.get('/stats', async (_req: Request, res: Response) => {
@@ -310,6 +324,71 @@ router.get('/email-logs', async (_req: Request, res: Response) => {
     LIMIT 500
   `;
   res.json(rows);
+});
+
+// ─── Superadmin: clinics overview (grouped staff per clinic) ─────────────────
+// Read-only. Fully wrapped in try/catch so a query issue returns [] instead of
+// ever crashing the panel. Groups org members + pending invitees under each clinic.
+router.get('/clinics-overview', async (req: Request, res: Response) => {
+  if (req.user!.role !== 'superadmin') { res.status(403).json({ error: 'Forbidden' }); return; }
+  try {
+    const orgs = await sql`
+      SELECT o.id, o.name AS org_name, o.type, o.city, o.created_at,
+             u.id AS owner_id, u.name AS owner_name, u.email AS owner_email,
+             u.specialty AS owner_specialty, u.approval_status AS owner_status
+      FROM organizations o
+      LEFT JOIN users u ON u.id = o.owner_id
+      ORDER BY o.created_at DESC
+    `;
+    if (!orgs.length) { res.json([]); return; }
+
+    const orgIds = orgs.map((o: any) => o.id as string);
+    const ownerIds = orgs.map((o: any) => o.owner_id).filter((x: any) => x != null);
+
+    const members = await sql`
+      SELECT om.org_id, om.role AS member_role,
+             u.id, u.name, u.email, u.specialty, u.role AS user_role, u.approval_status,
+             COALESCE(ls.login_count, 0)::int AS login_count, ls.last_login
+      FROM org_members om
+      JOIN users u ON u.id = om.user_id
+      LEFT JOIN (
+        SELECT user_id, MAX(logged_in_at) AS last_login, COUNT(*) AS login_count
+        FROM login_sessions GROUP BY user_id
+      ) ls ON ls.user_id = u.id
+      WHERE om.org_id = ANY(${orgIds}::text[])
+    `;
+
+    // Pending invitees linked to a clinic owner but not yet in org_members
+    const invited = ownerIds.length ? await sql`
+      SELECT u.id, u.name, u.email, u.specialty, u.role AS member_role, u.role AS user_role,
+             u.approval_status, u.invited_by_user_id AS owner_id,
+             COALESCE(ls.login_count, 0)::int AS login_count, ls.last_login
+      FROM users u
+      LEFT JOIN (
+        SELECT user_id, MAX(logged_in_at) AS last_login, COUNT(*) AS login_count
+        FROM login_sessions GROUP BY user_id
+      ) ls ON ls.user_id = u.id
+      WHERE u.invited_by_user_id = ANY(${ownerIds}::int[])
+        AND u.role IN ('doctor','nurse','pharmacist','labtech','lab_technician')
+    ` : [];
+
+    const result = orgs.map((o: any) => {
+      const mem = members.filter((m: any) => m.org_id === o.id);
+      const memIds = new Set(mem.map((m: any) => m.id));
+      const pend = invited.filter((iv: any) => iv.owner_id === o.owner_id && !memIds.has(iv.id));
+      const all = [...mem, ...pend];
+      const counts: Record<string, number> = {};
+      for (const m of all) {
+        const r = String(m.member_role || m.user_role || 'other').toLowerCase();
+        counts[r] = (counts[r] || 0) + 1;
+      }
+      return { ...o, members: all, counts, staff_total: all.length };
+    });
+    res.json(result);
+  } catch (e) {
+    console.error('[clinics-overview]', e);
+    res.json([]);
+  }
 });
 
 // ─── Clinic-scoped audit log (doctor sees their own clinic's log) ─────────────

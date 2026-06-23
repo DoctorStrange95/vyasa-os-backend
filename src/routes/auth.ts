@@ -185,6 +185,11 @@ router.post('/login', async (req: Request, res: Response) => {
 
   // ✅ Check approval status - only approved users can login
   const approvalStatus = user.approval_status as string;
+  // Blocked by superadmin — no one with a suspended account may log in (any role)
+  if (approvalStatus === 'suspended') {
+    res.status(403).json({ error: 'Your account has been blocked. Please contact support at support@vyasaa.com.' });
+    return;
+  }
   if (user.role === 'clinic_admin' && approvalStatus !== 'approved') {
     if (approvalStatus === 'pending') {
       res.status(403).json({ error: 'Your account is pending approval. You will receive an email once approved.' });
