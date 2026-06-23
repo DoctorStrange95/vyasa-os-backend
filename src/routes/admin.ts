@@ -207,7 +207,9 @@ router.get('/doctors/overview', async (_req: Request, res: Response) => {
       SELECT user_id, MAX(logged_in_at) AS last_login, COUNT(*) AS login_count
       FROM login_sessions GROUP BY user_id
     ) ls ON ls.user_id = u.id
-    WHERE u.role IN ('clinic_admin', 'doctor') AND u.approval_status = 'approved'
+    -- Solo profiles only. Clinic doctors (role 'doctor') belong to a clinic and
+    -- are shown under the Clinics tab, not in solo Doctor/Solo-Profile stats.
+    WHERE u.role = 'clinic_admin' AND u.approval_status = 'approved'
     ORDER BY total_bookings DESC, u.name
   `;
   res.json(rows);
