@@ -312,6 +312,52 @@ router.get('/email-logs', async (_req: Request, res: Response) => {
   res.json(rows);
 });
 
+// ─── Superadmin: clinics & polyclinics overview ───────────────────────────────
+
+router.get('/clinics-overview', async (req: Request, res: Response) => {
+  if (req.user!.role !== 'superadmin') { res.status(403).json({ error: 'Forbidden' }); return; }
+
+  const orgs = await sql`
+    SELECT
+      o.id, o.name AS org_name, o.city, o.type, o.created_at,
+      u.id AS owner_id, u.name AS owner_name, u.email AS owner_email,
+      u.specialty AS owner_specialty, u.phone AS owner_phone,
+      u.approval_status AS owner_status,
+      (SELECT COUNT(*) FROM org_members om WHERE om.org_id = o.id)::int AS staff_count,
+      (SELECT COUNT(*) FROM org_members om WHERE om.org_id = o.id AND om.role = 'doctor')::int AS doctor_count,
+      COALESCE((SELECT COUNT(DISTINCT b.patient_id) FROM bills b WHERE b.org_id = o.id), 0)::int AS patient_count,
+      COALESCE((SELECT SUM(b.total) FROM bills b WHERE b.org_id = o.id AND b.status != 'cancelled'), 0)::numeric AS total_billed
+    FROM organizations o
+    JOIN users u ON u.id = o.owner_id
+    ORDER BY o.created_at DESC
+  `;
+
+  if (orgs.length === 0) { res.json([]); return; }
+
+  const orgIds = orgs.map((o: any) => o.id as string);
+  const members = await sql`
+    SELECT
+      om.org_id, om.role AS member_role,
+      u.id, u.name, u.email, u.specialty, u.role AS user_role,
+      COALESCE(ls.login_count, 0)::int AS login_count, ls.last_login
+    FROM org_members om
+    JOIN users u ON u.id = om.user_id
+    LEFT JOIN (
+      SELECT user_id, MAX(logged_in_at) AS last_login, COUNT(*) AS login_count
+      FROM login_sessions GROUP BY user_id
+    ) ls ON ls.user_id = u.id
+    WHERE om.org_id = ANY(${orgIds}::text[])
+    ORDER BY om.org_id, om.role
+  `;
+
+  const result = orgs.map((o: any) => ({
+    ...o,
+    members: members.filter((m: any) => m.org_id === o.id),
+  }));
+
+  res.json(result);
+});
+
 // ─── Clinic-scoped audit log (doctor sees their own clinic's log) ─────────────
 
 export async function getClinicAuditLog(req: Request, res: Response) {
