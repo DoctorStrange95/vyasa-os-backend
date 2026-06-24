@@ -38,6 +38,22 @@ router.post('/', async (req: Request, res: Response) => {
   res.json({ id, patientId, senderId: u.userId, senderName, senderRole: u.role, message, type: type ?? 'message', time });
 });
 
+// ─── Recent messages across the whole clinic (for the notification bell) ─────
+// Defined BEFORE /:patientId so the literal path wins the route match.
+router.get('/recent', async (req: Request, res: Response) => {
+  const rows = await sql`
+    SELECT * FROM chat_messages
+    WHERE clinic_id = ${req.user!.clinicId}
+    ORDER BY time DESC
+    LIMIT 30
+  `;
+  res.json(rows.map(r => ({
+    id: r.id, patientId: r.patient_id, senderId: r.sender_id,
+    senderName: r.sender_name, senderRole: r.sender_role,
+    message: r.message, type: r.type, time: r.time,
+  })));
+});
+
 // ─── Get messages for a patient or clinic-wide ───────────────────────────────
 
 router.get('/:patientId', async (req: Request, res: Response) => {
