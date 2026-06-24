@@ -19,12 +19,21 @@ router.post('/', async (req: Request, res: Response) => {
   // and the persisted row share an id (clean de-dup when the chat reloads).
   const id = clientId || `msg_${Date.now()}_${Math.random().toString(36).slice(2)}`;
   const time = new Date().toISOString();
-  await sql`
-    INSERT INTO chat_messages (id, patient_id, clinic_id, sender_id, sender_name, sender_role, message, type, time)
-    VALUES (${id}, ${patientId}, ${u.clinicId}, ${u.userId}, ${u.name}, ${u.role}, ${message}, ${type ?? 'message'}, ${time})
-    ON CONFLICT (id) DO NOTHING
-  `;
-  res.json({ id, patientId, senderId: u.userId, senderName: u.name, senderRole: u.role, message, type: type ?? 'message', time });
+  // sender_name is NOT NULL — fall back so a thin JWT can't break the insert.
+  // clinic_id is kept exactly as u.clinicId so the GET filter still matches.
+  const senderName = u.name || 'User';
+  try {
+    await sql`
+      INSERT INTO chat_messages (id, patient_id, clinic_id, sender_id, sender_name, sender_role, message, type, time)
+      VALUES (${id}, ${patientId}, ${u.clinicId}, ${u.userId ?? null}, ${senderName}, ${u.role ?? 'user'}, ${message}, ${type ?? 'message'}, ${time})
+      ON CONFLICT (id) DO NOTHING
+    `;
+  } catch (e) {
+    console.error('[chat POST insert failed]', e);
+    res.status(500).json({ error: (e as Error).message });
+    return;
+  }
+  res.json({ id, patientId, senderId: u.userId, senderName, senderRole: u.role, message, type: type ?? 'message', time });
 });
 
 // ─── Get messages for a patient or clinic-wide ───────────────────────────────
