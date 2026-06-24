@@ -10,16 +10,19 @@ router.use(requireAuth);
 // message is persisted so it reaches other devices on their next load.
 router.post('/', async (req: Request, res: Response) => {
   const u = req.user!;
-  const { patientId, message, type } = req.body as { patientId?: string; message?: string; type?: string };
+  const { patientId, message, type, id: clientId } = req.body as { patientId?: string; message?: string; type?: string; id?: string };
   if (!patientId || !message?.trim()) {
     res.status(400).json({ error: 'patientId and message are required' });
     return;
   }
-  const id = `msg_${Date.now()}_${Math.random().toString(36).slice(2)}`;
+  // Use the client-provided id when present so the sender's optimistic message
+  // and the persisted row share an id (clean de-dup when the chat reloads).
+  const id = clientId || `msg_${Date.now()}_${Math.random().toString(36).slice(2)}`;
   const time = new Date().toISOString();
   await sql`
     INSERT INTO chat_messages (id, patient_id, clinic_id, sender_id, sender_name, sender_role, message, type, time)
     VALUES (${id}, ${patientId}, ${u.clinicId}, ${u.userId}, ${u.name}, ${u.role}, ${message}, ${type ?? 'message'}, ${time})
+    ON CONFLICT (id) DO NOTHING
   `;
   res.json({ id, patientId, senderId: u.userId, senderName: u.name, senderRole: u.role, message, type: type ?? 'message', time });
 });
