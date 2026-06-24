@@ -296,7 +296,7 @@ router.post('/consent', requireAuth, async (req: Request, res: Response) => {
 
 router.get('/me', requireAuth, async (req: Request, res: Response) => {
   const [user] = await sql`
-    SELECT u.id, u.name, u.email, u.role, u.specialty, u.degrees, u.phone,
+    SELECT u.id, u.name, u.email, u.role, u.specialty, u.degrees, u.phone, u.department,
            COALESCE(u.reg_number, u.license_number) AS reg_number,
            u.clinic_id, u.approval_status AS "approvalStatus",
            ps.doctor_name, ps.degrees AS pad_degrees, ps.specialty AS pad_specialty,
