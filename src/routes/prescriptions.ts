@@ -42,6 +42,33 @@ router.post('/', async (req: Request, res: Response) => {
   res.json({ ok: true, saved });
 });
 
+// ─── Get all prescriptions for the clinic (doctor + their staff portals) ─────
+
+router.get('/clinic', async (req: Request, res: Response) => {
+  const userId = req.user!.userId;
+  const clinicId = req.user!.clinicId;
+  const rows = await sql`
+    SELECT * FROM prescriptions
+    WHERE clinic_id IN (SELECT id FROM clinics WHERE owner_id = ${userId})
+       OR clinic_id = ${clinicId}
+    ORDER BY prescribed_at DESC
+    LIMIT 1000
+  `;
+  res.json(rows.map(r => ({
+    id: r.id,
+    patientId: r.patient_id,
+    drug: r.drug,
+    dose: r.dose,
+    route: r.route,
+    frequency: r.frequency,
+    duration: r.duration,
+    instructions: r.instructions,
+    prescribedBy: r.doctor_name,
+    time: r.prescribed_at,
+    status: r.status,
+  })));
+});
+
 // ─── Get prescriptions for a patient ─────────────────────────────────────────
 
 router.get('/patient/:patientId', async (req: Request, res: Response) => {
