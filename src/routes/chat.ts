@@ -23,10 +23,12 @@ router.post('/', async (req: Request, res: Response) => {
   // clinic_id is kept exactly as u.clinicId so the GET filter still matches.
   const senderName = u.name || 'User';
   try {
+    // Plain insert — NO "ON CONFLICT (id)": the prod chat_messages table may not
+    // have a unique constraint on id, which made ON CONFLICT error out (this was
+    // the "Chat not saved" bug). The frontend already de-dups by id on reload.
     await sql`
       INSERT INTO chat_messages (id, patient_id, clinic_id, sender_id, sender_name, sender_role, message, type, time)
       VALUES (${id}, ${patientId}, ${u.clinicId}, ${u.userId ?? null}, ${senderName}, ${u.role ?? 'user'}, ${message}, ${type ?? 'message'}, ${time})
-      ON CONFLICT (id) DO NOTHING
     `;
   } catch (e) {
     console.error('[chat POST insert failed]', e);
