@@ -696,6 +696,18 @@ export async function runMigrations() {
   `;
   await sql`CREATE INDEX IF NOT EXISTS idx_page_events_type_time ON page_events(event_type, created_at DESC)`;
 
+  // Product-analytics enrichment — tag every in-app event with who/where/which session.
+  // PHI is never stored here (no patient names/MRN/diagnosis) — only feature-usage metadata.
+  await sql`ALTER TABLE page_events ADD COLUMN IF NOT EXISTS user_id INTEGER`;
+  await sql`ALTER TABLE page_events ADD COLUMN IF NOT EXISTS user_name TEXT`;
+  await sql`ALTER TABLE page_events ADD COLUMN IF NOT EXISTS role TEXT`;
+  await sql`ALTER TABLE page_events ADD COLUMN IF NOT EXISTS clinic_id TEXT`;
+  await sql`ALTER TABLE page_events ADD COLUMN IF NOT EXISTS path TEXT`;
+  await sql`ALTER TABLE page_events ADD COLUMN IF NOT EXISTS session_id TEXT`;
+  await sql`CREATE INDEX IF NOT EXISTS idx_page_events_user ON page_events(user_id, created_at DESC)`;
+  await sql`CREATE INDEX IF NOT EXISTS idx_page_events_time ON page_events(created_at DESC)`;
+  await sql`CREATE INDEX IF NOT EXISTS idx_page_events_session ON page_events(session_id, created_at)`;
+
   console.log('✅ DB migrations complete');
 }
 

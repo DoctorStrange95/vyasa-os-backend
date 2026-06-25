@@ -409,4 +409,191 @@ export async function getClinicAuditLog(req: Request, res: Response) {
   res.json(rows);
 }
 
+// ═══════════════════════════════════════════════════════════════════════════
+//  PRODUCT ANALYTICS — how users actually use the product (page_events based)
+//  All endpoints are defensive: any failure returns an empty shape, never 500,
+//  so the admin dashboard always renders.
+// ═══════════════════════════════════════════════════════════════════════════
+
+// Live pulse — who's active right now + last-hour throughput.
+router.get('/analytics/live', async (_req: Request, res: Response) => {
+  try {
+    const [now] = await sql`
+      SELECT
+        COUNT(DISTINCT user_id) FILTER (WHERE created_at > NOW() - INTERVAL '5 minutes')  AS online_5m,
+        COUNT(DISTINCT user_id) FILTER (WHERE created_at > NOW() - INTERVAL '30 minutes') AS online_30m,
+        COUNT(*)               FILTER (WHERE created_at > NOW() - INTERVAL '1 hour')       AS events_1h,
+        COUNT(*)               FILTER (WHERE created_at > NOW() - INTERVAL '24 hours')     AS events_24h
+      FROM page_events`;
+    const online = await sql`
+      SELECT user_id, MAX(user_name) AS user_name, MAX(role) AS role,
+             MAX(created_at) AS last_seen, COUNT(*) AS events
+      FROM page_events
+      WHERE user_id IS NOT NULL AND created_at > NOW() - INTERVAL '30 minutes'
+      GROUP BY user_id ORDER BY last_seen DESC LIMIT 50`;
+    const recent = await sql`
+      SELECT event_type, user_name, role, path, metadata, created_at
+      FROM page_events ORDER BY created_at DESC LIMIT 40`;
+    res.json({ now: now ?? {}, online, recent });
+  } catch (e) { console.error('[analytics/live]', e); res.json({ now: {}, online: [], recent: [] }); }
+});
+
+// Engagement — DAU/WAU/MAU, stickiness, 30-day active-user trend, new vs returning.
+router.get('/analytics/engagement', async (_req: Request, res: Response) => {
+  try {
+    const [active] = await sql`
+      SELECT
+        COUNT(DISTINCT user_id) FILTER (WHERE created_at > NOW() - INTERVAL '1 day')   AS dau,
+        COUNT(DISTINCT user_id) FILTER (WHERE created_at > NOW() - INTERVAL '7 days')  AS wau,
+        COUNT(DISTINCT user_id) FILTER (WHERE created_at > NOW() - INTERVAL '30 days') AS mau
+      FROM page_events WHERE user_id IS NOT NULL`;
+    const trend = await sql`
+      SELECT to_char(d, 'YYYY-MM-DD') AS day,
+             COALESCE(c.active, 0)::int AS active_users,
+             COALESCE(c.events, 0)::int AS events
+      FROM generate_series(CURRENT_DATE - INTERVAL '29 days', CURRENT_DATE, INTERVAL '1 day') d
+      LEFT JOIN (
+        SELECT date_trunc('day', created_at) AS day,
+               COUNT(DISTINCT user_id) AS active, COUNT(*) AS events
+        FROM page_events WHERE created_at > NOW() - INTERVAL '30 days'
+        GROUP BY 1
+      ) c ON c.day = d
+      ORDER BY d`;
+    const dau = Number(active?.dau ?? 0), mau = Number(active?.mau ?? 0);
+    res.json({ ...active, stickiness: mau ? Math.round((dau / mau) * 100) : 0, trend });
+  } catch (e) { console.error('[analytics/engagement]', e); res.json({ dau: 0, wau: 0, mau: 0, stickiness: 0, trend: [] }); }
+});
+
+// Feature usage — which features get used, over 1d / 7d / 30d.
+router.get('/analytics/features', async (_req: Request, res: Response) => {
+  try {
+    const rows = await sql`
+      SELECT event_type,
+             COUNT(*)                                                          AS total,
+             COUNT(*) FILTER (WHERE created_at > NOW() - INTERVAL '1 day')     AS d1,
+             COUNT(*) FILTER (WHERE created_at > NOW() - INTERVAL '7 days')    AS d7,
+             COUNT(*) FILTER (WHERE created_at > NOW() - INTERVAL '30 days')   AS d30,
+             COUNT(DISTINCT user_id)                                           AS users
+      FROM page_events
+      GROUP BY event_type ORDER BY d30 DESC, total DESC LIMIT 80`;
+    res.json(rows);
+  } catch (e) { console.error('[analytics/features]', e); res.json([]); }
+});
+
+// Per-user usage leaderboard — last seen, activity, sessions, favourite feature.
+router.get('/analytics/users', async (_req: Request, res: Response) => {
+  try {
+    const rows = await sql`
+      SELECT pe.user_id, MAX(pe.user_name) AS user_name, MAX(pe.role) AS role, MAX(pe.clinic_id) AS clinic_id,
+             MAX(pe.created_at) AS last_seen,
+             COUNT(*)                                                       AS events_total,
+             COUNT(*) FILTER (WHERE pe.created_at > NOW() - INTERVAL '7 days')  AS events_7d,
+             COUNT(DISTINCT pe.session_id)                                  AS sessions,
+             COUNT(DISTINCT date_trunc('day', pe.created_at))               AS active_days,
+             COUNT(*) FILTER (WHERE pe.event_type = 'error')                AS errors,
+             (SELECT event_type FROM page_events p2
+              WHERE p2.user_id = pe.user_id AND p2.event_type NOT IN ('page_view','error')
+              GROUP BY event_type ORDER BY COUNT(*) DESC LIMIT 1)           AS top_feature
+      FROM page_events pe
+      WHERE pe.user_id IS NOT NULL
+      GROUP BY pe.user_id ORDER BY last_seen DESC LIMIT 200`;
+    res.json(rows);
+  } catch (e) { console.error('[analytics/users]', e); res.json([]); }
+});
+
+// One user's full activity timeline — to debug a specific doctor's issue.
+router.get('/analytics/user/:id', async (req: Request, res: Response) => {
+  try {
+    const id = Number(req.params.id);
+    const [summary] = await sql`
+      SELECT MAX(user_name) AS user_name, MAX(role) AS role, MAX(clinic_id) AS clinic_id,
+             MIN(created_at) AS first_seen, MAX(created_at) AS last_seen,
+             COUNT(*) AS events_total, COUNT(DISTINCT session_id) AS sessions,
+             COUNT(DISTINCT date_trunc('day', created_at)) AS active_days,
+             COUNT(*) FILTER (WHERE event_type = 'error') AS errors
+      FROM page_events WHERE user_id = ${id}`;
+    const features = await sql`
+      SELECT event_type, COUNT(*) AS count FROM page_events
+      WHERE user_id = ${id} GROUP BY event_type ORDER BY count DESC LIMIT 40`;
+    const timeline = await sql`
+      SELECT event_type, path, metadata, user_agent, created_at FROM page_events
+      WHERE user_id = ${id} ORDER BY created_at DESC LIMIT 200`;
+    const sessions = await sql`
+      SELECT logged_in_at, ip_address, user_agent, location_label
+      FROM login_sessions WHERE user_id = ${id} ORDER BY logged_in_at DESC LIMIT 20`;
+    res.json({ summary: summary ?? {}, features, timeline, sessions });
+  } catch (e) { console.error('[analytics/user]', e); res.json({ summary: {}, features: [], timeline: [], sessions: [] }); }
+});
+
+// Errors / user issues — recent errors grouped by message, plus latest occurrences.
+router.get('/analytics/errors', async (_req: Request, res: Response) => {
+  try {
+    const grouped = await sql`
+      SELECT COALESCE(metadata->>'message', 'Unknown error') AS message,
+             COUNT(*) AS count, COUNT(DISTINCT user_id) AS users,
+             MAX(created_at) AS last_seen
+      FROM page_events WHERE event_type = 'error'
+      GROUP BY 1 ORDER BY count DESC LIMIT 50`;
+    const recent = await sql`
+      SELECT user_id, user_name, role, path, metadata, user_agent, created_at
+      FROM page_events WHERE event_type = 'error' ORDER BY created_at DESC LIMIT 80`;
+    res.json({ grouped, recent });
+  } catch (e) { console.error('[analytics/errors]', e); res.json({ grouped: [], recent: [] }); }
+});
+
+// Device / browser / OS mix — from user_agent.
+router.get('/analytics/devices', async (_req: Request, res: Response) => {
+  try {
+    const browsers = await sql`
+      SELECT CASE
+        WHEN user_agent ILIKE '%Edg/%'    THEN 'Edge'
+        WHEN user_agent ILIKE '%Chrome/%' THEN 'Chrome'
+        WHEN user_agent ILIKE '%Firefox/%'THEN 'Firefox'
+        WHEN user_agent ILIKE '%Safari/%' THEN 'Safari'
+        ELSE 'Other' END AS browser, COUNT(DISTINCT user_id) AS users, COUNT(*) AS events
+      FROM page_events WHERE user_agent IS NOT NULL AND created_at > NOW() - INTERVAL '30 days'
+      GROUP BY 1 ORDER BY events DESC`;
+    const os = await sql`
+      SELECT CASE
+        WHEN user_agent ILIKE '%Android%'           THEN 'Android'
+        WHEN user_agent ILIKE '%iPhone%' OR user_agent ILIKE '%iPad%' THEN 'iOS'
+        WHEN user_agent ILIKE '%Windows%'           THEN 'Windows'
+        WHEN user_agent ILIKE '%Mac OS%'            THEN 'macOS'
+        WHEN user_agent ILIKE '%Linux%'             THEN 'Linux'
+        ELSE 'Other' END AS os, COUNT(DISTINCT user_id) AS users, COUNT(*) AS events
+      FROM page_events WHERE user_agent IS NOT NULL AND created_at > NOW() - INTERVAL '30 days'
+      GROUP BY 1 ORDER BY events DESC`;
+    const device = await sql`
+      SELECT CASE WHEN user_agent ILIKE '%Mobi%' OR user_agent ILIKE '%Android%' THEN 'Mobile'
+                  ELSE 'Desktop' END AS device, COUNT(DISTINCT user_id) AS users, COUNT(*) AS events
+      FROM page_events WHERE user_agent IS NOT NULL AND created_at > NOW() - INTERVAL '30 days'
+      GROUP BY 1 ORDER BY events DESC`;
+    res.json({ browsers, os, device });
+  } catch (e) { console.error('[analytics/devices]', e); res.json({ browsers: [], os: [], device: [] }); }
+});
+
+// Growth funnel — signup → approved → activated (first consult).
+router.get('/analytics/growth-funnel', async (_req: Request, res: Response) => {
+  try {
+    const [u] = await sql`
+      SELECT
+        COUNT(*)                                                          AS signups,
+        COUNT(*) FILTER (WHERE approval_status = 'approved')              AS approved,
+        COUNT(*) FILTER (WHERE created_at > NOW() - INTERVAL '7 days')    AS signups_7d,
+        COUNT(*) FILTER (WHERE created_at > NOW() - INTERVAL '30 days')   AS signups_30d
+      FROM users WHERE role != 'superadmin'`;
+    const [activated] = await sql`
+      SELECT COUNT(DISTINCT doctor_id) AS activated FROM visits`;
+    const signupTrend = await sql`
+      SELECT to_char(d, 'YYYY-MM-DD') AS day, COALESCE(c.n, 0)::int AS signups
+      FROM generate_series(CURRENT_DATE - INTERVAL '29 days', CURRENT_DATE, INTERVAL '1 day') d
+      LEFT JOIN (
+        SELECT date_trunc('day', created_at) AS day, COUNT(*) AS n
+        FROM users WHERE role != 'superadmin' AND created_at > NOW() - INTERVAL '30 days'
+        GROUP BY 1
+      ) c ON c.day = d ORDER BY d`;
+    res.json({ ...u, activated: Number(activated?.activated ?? 0), signupTrend });
+  } catch (e) { console.error('[analytics/growth-funnel]', e); res.json({ signups: 0, approved: 0, activated: 0, signupTrend: [] }); }
+});
+
 export default router;

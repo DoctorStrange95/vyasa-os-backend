@@ -548,13 +548,32 @@ app.post('/admin/users/:id/delete', async (req, res) => {
 
 // ─── Public event tracking (no auth — fires before login) ────────────────────
 
-app.post('/api/events', async (req, res) => {
-  const { event_type, metadata } = req.body as { event_type?: string; metadata?: object };
-  if (!event_type) { res.status(400).json({ error: 'event_type required' }); return; }
+async function insertEvent(req: any, e: any) {
   await sql`
-    INSERT INTO page_events (event_type, metadata, ip_address, user_agent)
-    VALUES (${event_type}, ${JSON.stringify(metadata ?? {})}, ${req.ip ?? null}, ${req.headers['user-agent'] ?? null})
+    INSERT INTO page_events (event_type, metadata, ip_address, user_agent, user_id, user_name, role, clinic_id, path, session_id)
+    VALUES (
+      ${e.event_type}, ${JSON.stringify(e.metadata ?? {})}, ${req.ip ?? null}, ${req.headers['user-agent'] ?? null},
+      ${e.user_id ?? null}, ${e.user_name ?? null}, ${e.role ?? null}, ${e.clinic_id ?? null}, ${e.path ?? null}, ${e.session_id ?? null}
+    )
   `;
+}
+
+app.post('/api/events', async (req, res) => {
+  const e = req.body as { event_type?: string };
+  if (!e?.event_type) { res.status(400).json({ error: 'event_type required' }); return; }
+  try { await insertEvent(req, e); } catch { /* analytics must never break the app */ }
+  res.json({ ok: true });
+});
+
+// Batched events — the frontend flushes a queue to cut request volume.
+app.post('/api/events/batch', async (req, res) => {
+  const { events } = req.body as { events?: any[] };
+  if (Array.isArray(events)) {
+    for (const e of events.slice(0, 50)) {
+      if (!e?.event_type) continue;
+      try { await insertEvent(req, e); } catch { /* swallow */ }
+    }
+  }
   res.json({ ok: true });
 });
 
