@@ -5,10 +5,6 @@ import { waNewBookingDoctor } from '../lib/whatsapp';
 
 const router = Router();
 
-// Public origin where doctor photos are served from (this backend). Override via env if the
-// backend domain changes. Used to turn base64 photos into cacheable, lazy-loaded image URLs.
-const PHOTO_BASE = process.env.PUBLIC_BACKEND_URL || 'https://vyasa-os-backend.onrender.com';
-
 // ─── Types mirrored from frontend ────────────────────────────────────────────
 interface DaySchedule {
   day: number;       // 0=Sun…6=Sat
@@ -390,7 +386,7 @@ router.get('/doctors/featured', async (req: Request, res: Response) => {
 
     // Pinned (is_featured=true) doctors always first, rest ranked by dynamic score
     const rows = await sql`
-      SELECT u.id, u.name, u.specialty, u.degrees, u.profile_slug,
+      SELECT u.id, u.name, u.specialty, u.degrees, u.profile_slug, u.profile_photo_url,
              u.years_experience, u.consultation_fee, u.accepting_patients, u.city, u.state,
              u.bio, u.is_featured,
              p.doctor_name, p.clinic_name, p.address, p.timings, p.phone,
@@ -425,8 +421,7 @@ router.get('/doctors/featured', async (req: Request, res: Response) => {
         specialty: r.specialty || '',
         qualification: r.degrees || '',
         profileSlug: r.profile_slug,
-        // Featured rows are pre-filtered to those WITH a photo — always serve via the cacheable endpoint.
-        profilePhotoUrl: `${PHOTO_BASE}/public/doctors/${r.profile_slug}/photo`,
+        profilePhotoUrl: r.profile_photo_url || '',
         yearsExperience: r.years_experience || 0,
         consultationFee: r.consultation_fee || null,
         bookingOpen: r.accepting_patients !== false && r.has_schedule === true,
@@ -452,10 +447,7 @@ router.get('/doctors', async (req: Request, res: Response) => {
     // Build all filters without dynamic SQL — use nullable params pattern
     const rows = await sql`
       SELECT u.id, u.name, u.specialty, u.degrees,
-             u.profile_slug,
-             -- Directory list is photo-free for speed: base64 photos can be 600KB+ each.
-             -- We only flag whether a photo exists; the full image loads on the profile page.
-             (u.profile_photo_url IS NOT NULL AND u.profile_photo_url != '') AS has_photo,
+             u.profile_slug, u.profile_photo_url,
              u.years_experience, u.consultation_fee,
              u.accepting_patients, u.city, u.state,
              u.bio, u.is_featured,
@@ -523,9 +515,7 @@ router.get('/doctors', async (req: Request, res: Response) => {
         specialty: r.specialty || '',
         qualification: r.degrees || '',
         profileSlug: r.profile_slug,
-        // Photo served as a cacheable, lazy-loaded image (not inline base64) — keeps the
-        // list JSON tiny + fast while preserving every doctor's photo. See GET …/photo below.
-        profilePhotoUrl: r.has_photo ? `${PHOTO_BASE}/public/doctors/${r.profile_slug}/photo` : '',
+        profilePhotoUrl: r.profile_photo_url || '',
         yearsExperience: r.years_experience || 0,
         consultationFee: r.consultation_fee || null,
         acceptingPatients: r.accepting_patients !== false,
@@ -548,37 +538,6 @@ router.get('/doctors', async (req: Request, res: Response) => {
     });
   } catch (e: any) {
     res.status(500).json({ error: e.message });
-  }
-});
-
-// ─── GET /public/doctors/:slug/photo — cacheable doctor photo (no auth) ──────
-// Decodes the stored base64 data-URI and serves it as a real, browser-cacheable image
-// so the directory/featured list JSON stays tiny and photos lazy-load on demand.
-router.get('/doctors/:slug/photo', async (req: Request, res: Response) => {
-  try {
-    const { slug } = req.params;
-    const rows = await sql`
-      SELECT profile_photo_url FROM users
-      WHERE profile_slug = ${slug} AND public_profile_enabled = true
-      LIMIT 1`;
-    const url = rows[0]?.profile_photo_url as string | undefined;
-    if (!url) { res.status(404).end(); return; }
-
-    // Stored as a data URI: data:image/jpeg;base64,XXXX
-    const m = /^data:(image\/[a-zA-Z0-9.+-]+);base64,(.+)$/s.exec(url);
-    if (m) {
-      const buf = Buffer.from(m[2], 'base64');
-      res.setHeader('Content-Type', m[1]);
-      res.setHeader('Cache-Control', 'public, max-age=86400');
-      res.end(buf);
-      return;
-    }
-    // Or a plain external URL (e.g. Google avatar) — redirect to it.
-    if (/^https?:\/\//.test(url)) { res.redirect(302, url); return; }
-    res.status(404).end();
-  } catch (e) {
-    console.error('[doctor photo]', e);
-    res.status(404).end();
   }
 });
 
