@@ -570,9 +570,6 @@ router.get('/doctors/:slug/photo', async (req: Request, res: Response) => {
       const buf = Buffer.from(m[2], 'base64');
       res.setHeader('Content-Type', m[1]);
       res.setHeader('Cache-Control', 'public, max-age=86400');
-      // Helmet defaults CORP to same-origin; this image is loaded cross-origin
-      // (app.vyasaa.com → backend), so it must be explicitly allowed or the browser blocks it.
-      res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
       res.end(buf);
       return;
     }
