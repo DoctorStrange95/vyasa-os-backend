@@ -43,6 +43,7 @@ const ALLOWED_ORIGINS = [
   'https://app.vyasaa.com',
   'https://vyasaa.com',
   'https://www.vyasaa.com',
+  'https://health.vyasaa.com',
   'http://localhost:5173',
   'http://localhost:3000',
 ];
