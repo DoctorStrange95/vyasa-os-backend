@@ -354,18 +354,32 @@ app.patch('/auth/me/change-password', requireAuth, async (req, res) => {
 // ─── Booking requests (authenticated) ────────────────────────────────────────
 app.get('/booking-requests', requireAuth, async (req, res) => {
   const userId = req.user!.userId;
+  const clinicId = req.user!.clinicId || '';
   const { status } = req.query;
   try {
+    // Tenant-scoped: the doctor sees their own bookings; their staff (nurse/
+    // receptionist/etc.) see the SAME clinic's bookings. Matches by personal id,
+    // shared clinic_id, or — for staff — their hiring doctor's id (invited_by_user_id).
+    // Still isolated per clinic: a doctor never sees another clinic's bookings.
     const rows = status
       ? await sql`
           SELECT br.*, c.name AS clinic_name FROM booking_requests br
           LEFT JOIN clinics c ON c.id = br.clinic_id
-          WHERE br.doctor_id = ${userId} AND br.status = ${status as string}
+          WHERE br.status = ${status as string}
+            AND (
+              br.doctor_id = ${userId}
+              OR (${clinicId} <> '' AND br.clinic_id = ${clinicId})
+              OR br.doctor_id IN (SELECT invited_by_user_id FROM users WHERE id = ${userId} AND invited_by_user_id IS NOT NULL)
+            )
           ORDER BY br.created_at DESC`
       : await sql`
           SELECT br.*, c.name AS clinic_name FROM booking_requests br
           LEFT JOIN clinics c ON c.id = br.clinic_id
-          WHERE br.doctor_id = ${userId}
+          WHERE (
+              br.doctor_id = ${userId}
+              OR (${clinicId} <> '' AND br.clinic_id = ${clinicId})
+              OR br.doctor_id IN (SELECT invited_by_user_id FROM users WHERE id = ${userId} AND invited_by_user_id IS NOT NULL)
+            )
           ORDER BY br.created_at DESC LIMIT 200`;
     res.json(rows);
   } catch (e: any) { res.status(500).json({ error: e.message }); }
@@ -373,18 +387,25 @@ app.get('/booking-requests', requireAuth, async (req, res) => {
 
 app.patch('/booking-requests/:id', requireAuth, async (req, res) => {
   const userId = req.user!.userId;
+  const clinicId = req.user!.clinicId || '';
   const { status, notes } = req.body;
   if (!['confirmed', 'cancelled', 'pending'].includes(status)) {
     res.status(400).json({ error: 'Invalid status' }); return;
   }
   try {
+    // Same tenant scope as GET: the doctor OR their same-clinic staff can action a booking.
     const rows = await sql`
       UPDATE booking_requests
       SET status = ${status}::text,
           notes = COALESCE(${notes ?? null}::text, notes),
           confirmed_at = CASE WHEN ${status}::text = 'confirmed' THEN NOW() ELSE NULL END,
           confirmed_by = CASE WHEN ${status}::text = 'confirmed' THEN ${userId}::integer ELSE NULL END
-      WHERE id = ${Number(req.params.id)} AND doctor_id = ${userId}
+      WHERE id = ${Number(req.params.id)}
+        AND (
+          doctor_id = ${userId}
+          OR (${clinicId} <> '' AND clinic_id = ${clinicId})
+          OR doctor_id IN (SELECT invited_by_user_id FROM users WHERE id = ${userId} AND invited_by_user_id IS NOT NULL)
+        )
       RETURNING *
     `;
     if (!rows.length) { res.status(404).json({ error: 'Not found' }); return; }
@@ -410,7 +431,7 @@ app.patch('/booking-requests/:id', requireAuth, async (req, res) => {
             ${aptId}, ${aptClinicId}, NULL, ${booking.patient_name as string},
             ${booking.patient_age ? Number(booking.patient_age) : null},
             ${(booking.patient_gender as string | null) ?? 'M'},
-            ${userId},
+            ${(booking.doctor_id as number | null) ?? userId},
             ${aptDate},
             ${(booking.preferred_time as string | null) ?? '09:00'},
             ${(booking.reason as string | null) ?? 'OPD Appointment'},
