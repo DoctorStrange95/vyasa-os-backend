@@ -599,6 +599,27 @@ app.post('/api/events/batch', async (req, res) => {
   res.json({ ok: true });
 });
 
+// ─── User feedback (any logged-in user → super-admin) ────────────────────────
+app.post('/feedback', requireAuth, async (req, res) => {
+  const u = req.user!;
+  const { rating, message, category, screenshot } = req.body as {
+    rating?: number; message?: string; category?: string; screenshot?: string;
+  };
+  if (!message?.trim() && !rating) { res.status(400).json({ error: 'Rating or message required' }); return; }
+  try {
+    const [row] = await sql`
+      INSERT INTO feedback (user_id, user_name, user_role, clinic_id, rating, category, message, screenshot)
+      VALUES (${u.userId}, ${u.name ?? null}, ${u.role ?? null}, ${u.clinicId ?? null},
+              ${rating ?? null}, ${category ?? null}, ${message?.trim() ?? ''}, ${screenshot || null})
+      RETURNING id, created_at
+    `;
+    res.status(201).json({ ok: true, id: row.id });
+  } catch (e: any) {
+    console.error('[feedback]', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // ─── Email Service ────────────────────────────────────────────────────────────
 
 app.post('/api/send-email', async (req, res) => {

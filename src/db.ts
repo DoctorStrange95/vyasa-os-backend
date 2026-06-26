@@ -708,6 +708,26 @@ export async function runMigrations() {
   await sql`CREATE INDEX IF NOT EXISTS idx_page_events_time ON page_events(created_at DESC)`;
   await sql`CREATE INDEX IF NOT EXISTS idx_page_events_session ON page_events(session_id, created_at)`;
 
+  // User feedback — any logged-in user submits (rating + note + optional screenshot),
+  // shown by name in the SuperAdmin Feedback tab. Additive; not linked to any existing table.
+  await sql`
+    CREATE TABLE IF NOT EXISTS feedback (
+      id SERIAL PRIMARY KEY,
+      user_id INTEGER,
+      user_name TEXT,
+      user_role TEXT,
+      clinic_id TEXT,
+      rating INTEGER,
+      category TEXT,
+      message TEXT,
+      screenshot TEXT,
+      status TEXT DEFAULT 'open',
+      resolved_at TIMESTAMPTZ,
+      created_at TIMESTAMPTZ DEFAULT NOW()
+    )
+  `;
+  await sql`CREATE INDEX IF NOT EXISTS idx_feedback_status_time ON feedback(status, created_at DESC)`;
+
   console.log('✅ DB migrations complete');
 }
 

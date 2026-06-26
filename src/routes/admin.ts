@@ -596,4 +596,30 @@ router.get('/analytics/growth-funnel', async (_req: Request, res: Response) => {
   } catch (e) { console.error('[analytics/growth-funnel]', e); res.json({ signups: 0, approved: 0, activated: 0, signupTrend: [] }); }
 });
 
+// ─── User feedback (superadmin) ──────────────────────────────────────────────
+router.get('/feedback', async (req: Request, res: Response) => {
+  try {
+    const status = req.query.status as string | undefined;
+    const rows = status
+      ? await sql`SELECT * FROM feedback WHERE status = ${status} ORDER BY created_at DESC LIMIT 300`
+      : await sql`SELECT * FROM feedback ORDER BY created_at DESC LIMIT 300`;
+    res.json(rows);
+  } catch (e) { console.error('[admin/feedback]', e); res.json([]); }
+});
+
+router.patch('/feedback/:id', async (req: Request, res: Response) => {
+  try {
+    const status = (req.body?.status as string) === 'resolved' ? 'resolved' : 'open';
+    const [row] = await sql`
+      UPDATE feedback
+      SET status = ${status},
+          resolved_at = ${status === 'resolved' ? new Date() : null}
+      WHERE id = ${Number(req.params.id)}
+      RETURNING id, status, resolved_at
+    `;
+    if (!row) { res.status(404).json({ error: 'Not found' }); return; }
+    res.json(row);
+  } catch (e: any) { console.error('[admin/feedback patch]', e); res.status(500).json({ error: e.message }); }
+});
+
 export default router;
