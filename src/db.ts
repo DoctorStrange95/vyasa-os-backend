@@ -684,6 +684,20 @@ export async function runMigrations() {
   await sql`CREATE INDEX IF NOT EXISTS idx_email_logs_recipient ON email_logs(recipient_id)`;
   await sql`CREATE INDEX IF NOT EXISTS idx_email_logs_sent_at ON email_logs(sent_at DESC)`;
 
+  // Reusable custom email templates authored by superadmins (server-persisted so
+  // they survive across devices / browsers, unlike the old localStorage-only copy).
+  await sql`
+    CREATE TABLE IF NOT EXISTS email_templates (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      subject TEXT NOT NULL,
+      body TEXT NOT NULL,
+      created_by INTEGER REFERENCES users(id),
+      created_at TIMESTAMPTZ DEFAULT NOW(),
+      updated_at TIMESTAMPTZ DEFAULT NOW()
+    )
+  `;
+
   await sql`
     CREATE TABLE IF NOT EXISTS page_events (
       id SERIAL PRIMARY KEY,

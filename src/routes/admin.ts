@@ -290,17 +290,74 @@ router.get('/recent-logins', async (_req: Request, res: Response) => {
 router.get('/geo-summary', async (_req: Request, res: Response) => {
   const byCityState = await sql`
     SELECT
-      COALESCE(ls.location_label, u.city, 'Unknown') AS location,
-      u.state,
+      COALESCE(NULLIF(ls.location_label, ''), NULLIF(u.city, ''), 'Unknown') AS location,
+      COALESCE(NULLIF(u.state, ''), NULLIF(u.reg_state, '')) AS state,
       COUNT(*) AS login_count,
       COUNT(DISTINCT u.id) AS unique_doctors
     FROM login_sessions ls
     JOIN users u ON u.id = ls.user_id
-    GROUP BY COALESCE(ls.location_label, u.city, 'Unknown'), u.state
+    WHERE u.role IN ('clinic_admin', 'doctor')
+    GROUP BY
+      COALESCE(NULLIF(ls.location_label, ''), NULLIF(u.city, ''), 'Unknown'),
+      COALESCE(NULLIF(u.state, ''), NULLIF(u.reg_state, ''))
     ORDER BY login_count DESC
     LIMIT 20
   `;
   res.json(byCityState);
+});
+
+// State-first geography: accurate distinct-doctor count per state, with the
+// cities/locations inside each state nested underneath. Powers the grouped
+// Geography view in the SuperAdmin panel. Same join semantics as /geo-summary
+// so the totals reconcile — just aggregated by state with nested locations.
+router.get('/geo-by-state', async (_req: Request, res: Response) => {
+  // Only count actual doctors (solo `clinic_admin` + clinic `doctor`), not staff
+  // or superadmins who also log in. State resolves from the optional "State of
+  // Practice" (u.state) and falls back to the REQUIRED "State of Registration"
+  // (u.reg_state) — so doctors who skipped practice-state still land in a state
+  // instead of "Unknown". NULLIF guards against empty-string values.
+  const states = await sql`
+    SELECT
+      COALESCE(NULLIF(u.state, ''), NULLIF(u.reg_state, ''), 'Unknown') AS state,
+      COUNT(*) AS login_count,
+      COUNT(DISTINCT u.id) AS doctors
+    FROM login_sessions ls
+    JOIN users u ON u.id = ls.user_id
+    WHERE u.role IN ('clinic_admin', 'doctor')
+    GROUP BY COALESCE(NULLIF(u.state, ''), NULLIF(u.reg_state, ''), 'Unknown')
+    ORDER BY doctors DESC, login_count DESC
+  `;
+
+  // Per-location breakdown, tagged with its state so we can nest them.
+  const locations = await sql`
+    SELECT
+      COALESCE(NULLIF(u.state, ''), NULLIF(u.reg_state, ''), 'Unknown') AS state,
+      COALESCE(NULLIF(ls.location_label, ''), NULLIF(u.city, ''), NULLIF(u.state, ''), NULLIF(u.reg_state, ''), 'Unknown') AS location,
+      COUNT(*) AS login_count,
+      COUNT(DISTINCT u.id) AS unique_doctors
+    FROM login_sessions ls
+    JOIN users u ON u.id = ls.user_id
+    WHERE u.role IN ('clinic_admin', 'doctor')
+    GROUP BY
+      COALESCE(NULLIF(u.state, ''), NULLIF(u.reg_state, ''), 'Unknown'),
+      COALESCE(NULLIF(ls.location_label, ''), NULLIF(u.city, ''), NULLIF(u.state, ''), NULLIF(u.reg_state, ''), 'Unknown')
+    ORDER BY COUNT(*) DESC
+  `;
+
+  const byState = states.map(s => ({
+    state: s.state as string,
+    login_count: Number(s.login_count),
+    doctors: Number(s.doctors),
+    locations: locations
+      .filter(l => l.state === s.state)
+      .map(l => ({
+        location: l.location as string,
+        login_count: Number(l.login_count),
+        unique_doctors: Number(l.unique_doctors),
+      })),
+  }));
+
+  res.json(byState);
 });
 
 // ─── Email logs ──────────────────────────────────────────────────────────────
@@ -326,6 +383,38 @@ router.get('/email-logs', async (_req: Request, res: Response) => {
     LIMIT 500
   `;
   res.json(rows);
+});
+
+// ─── Custom email templates (server-persisted, superadmin only) ──────────────
+
+router.get('/email-templates', async (_req: Request, res: Response) => {
+  const rows = await sql`
+    SELECT id, name, subject, body, updated_at
+    FROM email_templates
+    ORDER BY updated_at DESC
+  `;
+  res.json(rows);
+});
+
+// Upsert by id — used for both create and edit from the SuperAdmin templates tab
+router.post('/email-templates', async (req: Request, res: Response) => {
+  const { id, name, subject, body } = req.body as { id?: string; name?: string; subject?: string; body?: string };
+  if (!id || !name?.trim() || !subject?.trim() || !body?.trim()) {
+    res.status(400).json({ error: 'id, name, subject and body are required' });
+    return;
+  }
+  await sql`
+    INSERT INTO email_templates (id, name, subject, body, created_by, updated_at)
+    VALUES (${id}, ${name.trim()}, ${subject}, ${body}, ${req.user!.userId}, NOW())
+    ON CONFLICT (id) DO UPDATE
+      SET name = EXCLUDED.name, subject = EXCLUDED.subject, body = EXCLUDED.body, updated_at = NOW()
+  `;
+  res.json({ ok: true, id });
+});
+
+router.delete('/email-templates/:id', async (req: Request, res: Response) => {
+  await sql`DELETE FROM email_templates WHERE id = ${req.params.id}`;
+  res.json({ ok: true });
 });
 
 // ─── Superadmin: clinics overview (grouped staff per clinic) ─────────────────
