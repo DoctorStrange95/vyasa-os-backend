@@ -442,7 +442,9 @@ router.get('/doctors/featured', async (req: Request, res: Response) => {
 
 // ─── GET /public/doctors — doctor directory (no auth) ────────────────────────
 router.get('/doctors', async (req: Request, res: Response) => {
-  const { state, city, specialty, search, limit = '50', offset = '0' } = req.query as Record<string, string>;
+  const { state, city, specialty, search, limit = '50', offset = '0', sort = 'booking' } = req.query as Record<string, string>;
+  // Whitelist the sort key; anything else falls back to the default (booking-open first).
+  const sortKey = ['booking', 'experience', 'newest', 'name'].includes(sort) ? sort : 'booking';
   try {
     // Build all filters without dynamic SQL — use nullable params pattern
     const rows = await sql`
@@ -472,6 +474,9 @@ router.get('/doctors', async (req: Request, res: Response) => {
              OR LOWER(u.city) ILIKE ${search ? `%${search}%` : ''}
              OR LOWER(p.clinic_name) ILIKE ${search ? `%${search}%` : ''})
       ORDER BY
+        CASE WHEN ${sortKey} = 'experience' THEN u.years_experience END DESC NULLS LAST,
+        CASE WHEN ${sortKey} = 'newest'     THEN u.created_at END DESC,
+        CASE WHEN ${sortKey} = 'name'       THEN LOWER(u.name) END ASC NULLS LAST,
         (u.accepting_patients IS NOT FALSE AND EXISTS (
            SELECT 1 FROM clinics c2, jsonb_array_elements(c2.schedule) d
            WHERE (c2.owner_id = u.id OR c2.id = u.clinic_id)
