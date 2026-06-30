@@ -239,11 +239,14 @@ app.post('/auth/google', async (req, res) => {
       isNewUser: false,
     });
   } else {
-    // New user — return partial data so frontend shows registration form
+    // New user — return partial data so frontend shows registration form.
+    // Return googlePicture too so it can be saved at signup (not only on a
+    // later login), giving new Google doctors a profile photo immediately.
     res.json({
       isNewUser: true,
       googleEmail,
       googleName,
+      googlePicture,
     });
   }
 });

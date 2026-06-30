@@ -22,6 +22,7 @@ const RegisterSchema = z.object({
   state: z.string().optional(),
   city: z.string().optional(),
   googleId: z.string().optional(),
+  profilePhotoUrl: z.string().optional(),
   clinicIds: z.string().optional(),
   clinicName: z.string().optional(),
   invitedByUserId: z.number().optional(),
@@ -64,7 +65,7 @@ router.post('/register', async (req: Request, res: Response) => {
     res.status(400).json({ error: parsed.error.issues[0].message });
     return;
   }
-  const { name, email, password, role, specialty, degrees, phone, licenseNumber, medicalCouncil, regState, state, city, googleId, clinicIds, clinicName: invitedClinicName, invitedByUserId } = parsed.data;
+  const { name, email, password, role, specialty, degrees, phone, licenseNumber, medicalCouncil, regState, state, city, googleId, profilePhotoUrl, clinicIds, clinicName: invitedClinicName, invitedByUserId } = parsed.data;
 
   const passwordHash = await bcrypt.hash(password, 12);
   const effectiveRole = role ?? 'clinic_admin';
@@ -91,6 +92,7 @@ router.post('/register', async (req: Request, res: Response) => {
         license_number = ${licenseNumber ?? null}, medical_council = ${medicalCouncil ?? null},
         reg_state = ${regState ?? null}, state = ${state ?? null}, city = ${city ?? null},
         google_id = ${googleId ?? null}, approval_status = ${approvalStatus}, rejection_reason = NULL,
+        profile_photo_url = COALESCE(NULLIF(${profilePhotoUrl ?? null}, ''), profile_photo_url),
         invited_clinic_ids = ${clinicIds ?? null}, invited_clinic_name = ${invitedClinicName ?? null},
         invited_by_user_id = ${invitedByUserId ?? null}, created_at = NOW()
       WHERE id = ${existing.id}
@@ -98,9 +100,9 @@ router.post('/register', async (req: Request, res: Response) => {
     `;
   } else {
     [user] = await sql`
-      INSERT INTO users (name, email, password_hash, role, specialty, degrees, phone, license_number, medical_council, reg_state, state, city, google_id, approval_status, invited_clinic_ids, invited_clinic_name, invited_by_user_id)
+      INSERT INTO users (name, email, password_hash, role, specialty, degrees, phone, license_number, medical_council, reg_state, state, city, google_id, profile_photo_url, approval_status, invited_clinic_ids, invited_clinic_name, invited_by_user_id)
       VALUES (${name}, ${email}, ${passwordHash}, ${effectiveRole}, ${specialty ?? null}, ${degrees ?? null}, ${phone ?? null},
-              ${licenseNumber ?? null}, ${medicalCouncil ?? null}, ${regState ?? null}, ${state ?? null}, ${city ?? null}, ${googleId ?? null}, ${approvalStatus},
+              ${licenseNumber ?? null}, ${medicalCouncil ?? null}, ${regState ?? null}, ${state ?? null}, ${city ?? null}, ${googleId ?? null}, ${profilePhotoUrl ?? null}, ${approvalStatus},
               ${clinicIds ?? null}, ${invitedClinicName ?? null}, ${invitedByUserId ?? null})
       RETURNING id, name, email, role, specialty, degrees, phone, clinic_id, approval_status
     `;
