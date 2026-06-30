@@ -472,6 +472,7 @@ router.get('/doctors', async (req: Request, res: Response) => {
              OR LOWER(u.city) ILIKE ${search ? `%${search}%` : ''}
              OR LOWER(p.clinic_name) ILIKE ${search ? `%${search}%` : ''})
       ORDER BY
+        (u.accepting_patients IS NOT FALSE) DESC,
         u.is_featured DESC NULLS LAST,
         (u.profile_photo_url IS NOT NULL AND u.profile_photo_url != '') DESC,
         u.created_at DESC
