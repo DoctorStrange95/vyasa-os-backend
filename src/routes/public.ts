@@ -472,7 +472,11 @@ router.get('/doctors', async (req: Request, res: Response) => {
              OR LOWER(u.city) ILIKE ${search ? `%${search}%` : ''}
              OR LOWER(p.clinic_name) ILIKE ${search ? `%${search}%` : ''})
       ORDER BY
-        (u.accepting_patients IS NOT FALSE) DESC,
+        (u.accepting_patients IS NOT FALSE AND EXISTS (
+           SELECT 1 FROM clinics c2, jsonb_array_elements(c2.schedule) d
+           WHERE (c2.owner_id = u.id OR c2.id = u.clinic_id)
+             AND (d->>'open')::boolean
+         )) DESC,
         u.is_featured DESC NULLS LAST,
         (u.profile_photo_url IS NOT NULL AND u.profile_photo_url != '') DESC,
         u.created_at DESC
