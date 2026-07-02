@@ -134,6 +134,7 @@ router.get('/pad', async (req: Request, res: Response) => {
     quote: row.quote,
     showQuote: row.show_quote,
     showTimings: row.show_timings,
+    showEmail: row.show_email,
     theme: row.theme,
     customFields: row.custom_fields,
     eSignUrl: row.e_sign_url ?? '',
@@ -147,11 +148,11 @@ router.put('/pad', async (req: Request, res: Response) => {
   const userId = req.user!.userId;
   await sql`
     INSERT INTO pad_settings (user_id, doctor_name, degrees, specialty, reg_number, address, phone, email,
-      timings, clinic_name, footer_note, quote, show_quote, show_timings, theme, custom_fields, e_sign_url, updated_at)
+      timings, clinic_name, footer_note, quote, show_quote, show_timings, show_email, theme, custom_fields, e_sign_url, updated_at)
     VALUES (${userId}, ${d.doctorName ?? ''}, ${d.degrees ?? ''}, ${d.specialty ?? ''},
             ${d.regNumber ?? ''}, ${d.address ?? ''}, ${d.phone ?? ''}, ${d.email ?? ''},
             ${d.timings ?? ''}, ${d.clinicName ?? ''}, ${d.footerNote ?? ''},
-            ${d.quote ?? ''}, ${d.showQuote ?? false}, ${d.showTimings ?? true},
+            ${d.quote ?? ''}, ${d.showQuote ?? false}, ${d.showTimings ?? true}, ${d.showEmail ?? true},
             ${d.theme ?? 'teal'}, ${JSON.stringify(d.customFields ?? [])}, ${d.eSignUrl ?? ''}, NOW())
     ON CONFLICT (user_id) DO UPDATE SET
       doctor_name = EXCLUDED.doctor_name, degrees = EXCLUDED.degrees,
@@ -160,6 +161,7 @@ router.put('/pad', async (req: Request, res: Response) => {
       timings = EXCLUDED.timings, clinic_name = EXCLUDED.clinic_name,
       footer_note = EXCLUDED.footer_note, quote = EXCLUDED.quote,
       show_quote = EXCLUDED.show_quote, show_timings = EXCLUDED.show_timings,
+      show_email = EXCLUDED.show_email,
       theme = EXCLUDED.theme, custom_fields = EXCLUDED.custom_fields,
       e_sign_url = EXCLUDED.e_sign_url, updated_at = NOW()
   `;

@@ -491,6 +491,11 @@ export async function runMigrations() {
   // E-signature URL stored per doctor in pad_settings
   await sql`ALTER TABLE pad_settings ADD COLUMN IF NOT EXISTS e_sign_url TEXT DEFAULT ''`;
 
+  // Show/hide toggle for email on the printed pad, matching show_quote/show_timings.
+  // Defaults true so doctors who already have an email filled in keep seeing it
+  // after this column is added — no behavior change for existing data.
+  await sql`ALTER TABLE pad_settings ADD COLUMN IF NOT EXISTS show_email BOOLEAN DEFAULT true`;
+
   // ── Organizations (clinics / hospitals as entities) ───────────────────────
   await sql`
     CREATE TABLE IF NOT EXISTS organizations (
@@ -694,6 +699,17 @@ export async function runMigrations() {
       body TEXT NOT NULL,
       created_by INTEGER REFERENCES users(id),
       created_at TIMESTAMPTZ DEFAULT NOW(),
+      updated_at TIMESTAMPTZ DEFAULT NOW()
+    )
+  `;
+
+  // Per-doctor "which consult sections do I want always open" preference —
+  // server-persisted so it follows the doctor across devices/browsers, not
+  // just the device they set it on.
+  await sql`
+    CREATE TABLE IF NOT EXISTS user_consult_prefs (
+      user_id INTEGER PRIMARY KEY REFERENCES users(id),
+      pinned_sections JSONB DEFAULT '[]',
       updated_at TIMESTAMPTZ DEFAULT NOW()
     )
   `;

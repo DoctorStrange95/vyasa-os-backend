@@ -304,7 +304,7 @@ router.get('/me', requireAuth, async (req: Request, res: Response) => {
            ps.doctor_name, ps.degrees AS pad_degrees, ps.specialty AS pad_specialty,
            COALESCE(ps.reg_number, u.license_number) AS pad_reg,
            ps.address, ps.phone AS pad_phone, ps.timings, ps.clinic_name, ps.footer_note,
-           ps.quote, ps.show_quote, ps.show_timings, ps.theme, ps.custom_fields
+           ps.quote, ps.show_quote, ps.show_timings, ps.show_email, ps.theme, ps.custom_fields
     FROM users u
     LEFT JOIN pad_settings ps ON ps.user_id = u.id
     WHERE u.id = ${req.user!.userId}
@@ -350,6 +350,31 @@ router.patch('/me', requireAuth, async (req: Request, res: Response) => {
     WHERE user_id = ${userId}
   `;
 
+  res.json({ ok: true });
+});
+
+// ─── Consult page section preferences ─────────────────────────────────────────
+// Which sections a doctor wants always open in the Consult page, on top of the
+// 5 core ones. Follows the doctor across devices — separate table from
+// pad_settings since this is a UI preference, not print/letterhead data.
+
+router.get('/me/consult-prefs', requireAuth, async (req: Request, res: Response) => {
+  const [row] = await sql`SELECT pinned_sections FROM user_consult_prefs WHERE user_id = ${req.user!.userId}`;
+  res.json({ pinnedSections: row?.pinned_sections ?? [] });
+});
+
+router.put('/me/consult-prefs', requireAuth, async (req: Request, res: Response) => {
+  const { pinnedSections } = req.body as { pinnedSections?: string[] };
+  if (!Array.isArray(pinnedSections)) {
+    res.status(400).json({ error: 'pinnedSections must be an array of section ids' });
+    return;
+  }
+  await sql`
+    INSERT INTO user_consult_prefs (user_id, pinned_sections, updated_at)
+    VALUES (${req.user!.userId}, ${JSON.stringify(pinnedSections)}, NOW())
+    ON CONFLICT (user_id) DO UPDATE
+      SET pinned_sections = EXCLUDED.pinned_sections, updated_at = NOW()
+  `;
   res.json({ ok: true });
 });
 
