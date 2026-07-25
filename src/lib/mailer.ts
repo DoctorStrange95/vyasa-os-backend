@@ -40,11 +40,17 @@ function parseFrom(): { name?: string; email: string } {
   return m ? { name: m[1].trim().replace(/^"|"$/g, ''), email: m[2].trim() } : { email: FROM.trim() };
 }
 
-async function sendViaBrevoApi(to: string, subject: string, html: string): Promise<void> {
+async function sendViaBrevoApi(to: string, subject: string, html: string, cc: string[] = []): Promise<void> {
   const res = await fetch('https://api.brevo.com/v3/smtp/email', {
     method: 'POST',
     headers: { 'api-key': BREVO_KEY!, 'content-type': 'application/json', accept: 'application/json' },
-    body: JSON.stringify({ sender: parseFrom(), to: [{ email: to }], subject, htmlContent: html }),
+    body: JSON.stringify({
+      sender: parseFrom(),
+      to: [{ email: to }],
+      ...(cc.length ? { cc: cc.map(email => ({ email })) } : {}),
+      subject,
+      htmlContent: html,
+    }),
   });
   if (!res.ok) throw new Error(`Brevo API ${res.status}: ${await res.text()}`);
 }
@@ -75,13 +81,13 @@ function layout(title: string, body: string): string {
 }
 
 // Fire-and-forget — never block or fail a request because of email
-export function sendMail(to: string, subject: string, html: string): void {
+export function sendMail(to: string, subject: string, html: string, cc: string[] = []): void {
   if (!BREVO_KEY && !transporter) { console.warn(`✉️  skipped (mailer unconfigured): "${subject}" → ${to}`); return; }
   if (!to) { console.warn(`✉️  skipped (no recipient): "${subject}"`); return; }
   console.log(`✉️  sending "${subject}" → ${to}…`);
   const send = BREVO_KEY
-    ? sendViaBrevoApi(to, subject, html)
-    : transporter!.sendMail({ from: FROM, to, subject, html }).then(() => undefined);
+    ? sendViaBrevoApi(to, subject, html, cc)
+    : transporter!.sendMail({ from: FROM, to, cc, subject, html }).then(() => undefined);
   send
     .then(() => console.log(`✉️  sent "${subject}" → ${to}`))
     .catch(err => console.error(`✉️  FAILED "${subject}" → ${to}:`, err.message));
