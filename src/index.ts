@@ -73,6 +73,13 @@ const authLimiter = rateLimit({
   legacyHeaders: false,
   message: { error: 'Too many attempts. Please try again in a few minutes.' },
 });
+const partnerApplicationLimiter = rateLimit({
+  windowMs: 60 * 60 * 1000,
+  limit: 8,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Too many partnership applications. Please try again later.' },
+});
 app.use('/auth/login', authLimiter);
 app.use('/auth/register', authLimiter);
 app.use('/auth/google', authLimiter);
@@ -262,6 +269,7 @@ app.use('/clinics', clinicsRouter);
 app.use('/chat', chatRouter);
 app.use('/admin', adminRouter);
 app.use('/staff', staffRouter);
+app.use('/public/partner-applications', partnerApplicationLimiter);
 app.use('/public', publicRouter);
 app.use('/org', orgRouter);
 app.use('/prescriptions', prescriptionsRouter);

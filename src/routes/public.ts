@@ -581,4 +581,43 @@ router.get('/sitemap.xml', async (_req: Request, res: Response) => {
   }
 });
 
+// ─── POST /public/partner-applications — lab and pharmacy interest forms ───
+// This intentionally writes to a separate queue so it cannot affect existing
+// doctor approvals, bookings, or clinical workflows.
+router.post('/partner-applications', async (req: Request, res: Response) => {
+  try {
+    const partnerType = String(req.body?.partnerType ?? '').trim().toLowerCase();
+    const organisation = String(req.body?.organisation ?? '').trim();
+    const contactName = String(req.body?.contactName ?? '').trim();
+    const email = String(req.body?.email ?? '').trim().toLowerCase();
+    const phone = String(req.body?.phone ?? '').trim();
+    const location = String(req.body?.location ?? '').trim();
+    const note = String(req.body?.note ?? '').trim();
+
+    if (!['lab', 'pharmacy'].includes(partnerType)) {
+      res.status(400).json({ error: 'Choose either a laboratory or pharmacy application.' }); return;
+    }
+    if (!organisation || organisation.length > 160 || !contactName || contactName.length > 120 ||
+        !location || location.length > 160 || note.length > 3000) {
+      res.status(400).json({ error: 'Please complete the required fields with valid details.' }); return;
+    }
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || email.length > 254) {
+      res.status(400).json({ error: 'Please enter a valid work email.' }); return;
+    }
+    if (!/^[+()\-\s0-9]{7,24}$/.test(phone)) {
+      res.status(400).json({ error: 'Please enter a valid phone number.' }); return;
+    }
+
+    const [application] = await sql`
+      INSERT INTO partner_applications (partner_type, organisation, contact_name, email, phone, location, note)
+      VALUES (${partnerType}, ${organisation}, ${contactName}, ${email}, ${phone}, ${location}, ${note})
+      RETURNING id, status, created_at
+    `;
+    res.status(201).json(application);
+  } catch (e: any) {
+    console.error('[public/partner-applications]', e);
+    res.status(500).json({ error: 'Unable to submit your interest right now. Please try again.' });
+  }
+});
+
 export default router;

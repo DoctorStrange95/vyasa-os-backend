@@ -711,4 +711,53 @@ router.patch('/feedback/:id', async (req: Request, res: Response) => {
   } catch (e: any) { console.error('[admin/feedback patch]', e); res.status(500).json({ error: e.message }); }
 });
 
+// ─── Partner applications (superadmin only) ────────────────────────────────
+router.get('/partner-applications', async (req: Request, res: Response) => {
+  try {
+    const status = typeof req.query.status === 'string' ? req.query.status : '';
+    const type = typeof req.query.type === 'string' ? req.query.type : '';
+    const validStatuses = ['new', 'reviewing', 'approved', 'rejected'];
+    const validTypes = ['lab', 'pharmacy'];
+    if (status && !validStatuses.includes(status)) { res.status(400).json({ error: 'Invalid status.' }); return; }
+    if (type && !validTypes.includes(type)) { res.status(400).json({ error: 'Invalid partner type.' }); return; }
+
+    const rows = await sql`
+      SELECT p.*, u.name AS reviewed_by_name
+      FROM partner_applications p
+      LEFT JOIN users u ON u.id = p.reviewed_by
+      WHERE (${status || null}::text IS NULL OR p.status = ${status || null})
+        AND (${type || null}::text IS NULL OR p.partner_type = ${type || null})
+      ORDER BY CASE p.status WHEN 'new' THEN 0 WHEN 'reviewing' THEN 1 ELSE 2 END, p.created_at DESC
+      LIMIT 500
+    `;
+    res.json(rows);
+  } catch (e: any) {
+    console.error('[admin/partner-applications]', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+router.patch('/partner-applications/:id', async (req: Request, res: Response) => {
+  try {
+    const id = Number(req.params.id);
+    const status = String(req.body?.status ?? '');
+    const reviewerNote = String(req.body?.reviewerNote ?? '').trim();
+    if (!Number.isInteger(id) || id < 1) { res.status(400).json({ error: 'Invalid application.' }); return; }
+    if (!['new', 'reviewing', 'approved', 'rejected'].includes(status) || reviewerNote.length > 3000) {
+      res.status(400).json({ error: 'Invalid application update.' }); return;
+    }
+    const [row] = await sql`
+      UPDATE partner_applications
+      SET status = ${status}, reviewer_note = ${reviewerNote}, reviewed_by = ${req.user!.userId}, reviewed_at = NOW()
+      WHERE id = ${id}
+      RETURNING *
+    `;
+    if (!row) { res.status(404).json({ error: 'Not found' }); return; }
+    res.json(row);
+  } catch (e: any) {
+    console.error('[admin/partner-applications patch]', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
 export default router;
