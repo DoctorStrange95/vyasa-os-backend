@@ -87,6 +87,39 @@ export function sendMail(to: string, subject: string, html: string): void {
     .catch(err => console.error(`✉️  FAILED "${subject}" → ${to}:`, err.message));
 }
 
+function escapeHtml(value: string): string {
+  return value.replace(/[&<>"']/g, char => ({
+    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
+  }[char]!));
+}
+
+export function partnerApplicationNotification(application: {
+  partnerType: string;
+  organisation: string;
+  contactName: string;
+  email: string;
+  phone: string;
+  location: string;
+  note: string;
+}): { subject: string; html: string } {
+  const type = application.partnerType === 'lab' ? 'Laboratory' : 'Pharmacy';
+  const field = (label: string, value: string) =>
+    `<p style="margin:0 0 10px;color:#475569;font-size:14px"><strong style="color:#0f172a">${label}:</strong> ${escapeHtml(value || '—')}</p>`;
+
+  return {
+    subject: `New ${type.toLowerCase()} partnership interest — ${application.organisation}`,
+    html: layout(`New ${type} partnership interest`, `
+      <p style="color:#475569;font-size:14px;line-height:1.7">A new partnership interest was saved in Vyasa Super Admin.</p>
+      ${field('Organisation', application.organisation)}
+      ${field('Contact', application.contactName)}
+      ${field('Email', application.email)}
+      ${field('Phone', application.phone)}
+      ${field('Location', application.location)}
+      ${field('Notes', application.note)}
+      <p style="margin:22px 0"><a href="https://app.vyasaa.com/app/admin" style="background:${TEAL};color:#fff;text-decoration:none;font-weight:bold;padding:12px 22px;border-radius:10px;font-size:14px">Review in Super Admin →</a></p>`),
+  };
+}
+
 // ─── Templates ────────────────────────────────────────────────────────────────
 
 export function approvalEmail(doctorName: string): { subject: string; html: string } {
