@@ -1,6 +1,6 @@
 import { Router, Request, Response } from 'express';
 import sql from '../db';
-import { sendMail, newBookingDoctorEmail } from '../lib/mailer';
+import { sendMail, newBookingDoctorEmail, partnerApplicationNotification } from '../lib/mailer';
 import { waNewBookingDoctor } from '../lib/whatsapp';
 
 const router = Router();
@@ -613,6 +613,8 @@ router.post('/partner-applications', async (req: Request, res: Response) => {
       VALUES (${partnerType}, ${organisation}, ${contactName}, ${email}, ${phone}, ${location}, ${note})
       RETURNING id, status, created_at
     `;
+    const notification = partnerApplicationNotification({ partnerType, organisation, contactName, email, phone, location, note });
+    sendMail(process.env.PARTNER_APPLICATION_NOTIFICATION_EMAIL ?? 'support@vyasaa.com', notification.subject, notification.html);
     res.status(201).json(application);
   } catch (e: any) {
     console.error('[public/partner-applications]', e);
