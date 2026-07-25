@@ -758,6 +758,27 @@ export async function runMigrations() {
   `;
   await sql`CREATE INDEX IF NOT EXISTS idx_feedback_status_time ON feedback(status, created_at DESC)`;
 
+  // Public lab and pharmacy partnership interest. This is intentionally
+  // separate from users, approvals, bookings, and feedback.
+  await sql`
+    CREATE TABLE IF NOT EXISTS partner_applications (
+      id SERIAL PRIMARY KEY,
+      partner_type TEXT NOT NULL CHECK (partner_type IN ('lab', 'pharmacy')),
+      organisation TEXT NOT NULL,
+      contact_name TEXT NOT NULL,
+      email TEXT NOT NULL,
+      phone TEXT NOT NULL,
+      location TEXT NOT NULL,
+      note TEXT DEFAULT '',
+      status TEXT NOT NULL DEFAULT 'new' CHECK (status IN ('new', 'reviewing', 'approved', 'rejected')),
+      reviewer_note TEXT DEFAULT '',
+      reviewed_by INTEGER REFERENCES users(id),
+      reviewed_at TIMESTAMPTZ,
+      created_at TIMESTAMPTZ DEFAULT NOW()
+    )
+  `;
+  await sql`CREATE INDEX IF NOT EXISTS idx_partner_applications_status_time ON partner_applications(status, created_at DESC)`;
+
   console.log('✅ DB migrations complete');
 }
 
