@@ -614,7 +614,13 @@ router.post('/partner-applications', async (req: Request, res: Response) => {
       RETURNING id, status, created_at
     `;
     const notification = partnerApplicationNotification({ partnerType, organisation, contactName, email, phone, location, note });
-    sendMail(process.env.PARTNER_APPLICATION_NOTIFICATION_EMAIL ?? 'support@vyasaa.com', notification.subject, notification.html);
+    const notificationRecipients = new Set([
+      process.env.PARTNER_APPLICATION_NOTIFICATION_EMAIL ?? 'support@vyasaa.com',
+      'kaartkaroo@gmail.com',
+    ]);
+    notificationRecipients.forEach(recipient =>
+      sendMail(recipient, notification.subject, notification.html),
+    );
     res.status(201).json(application);
   } catch (e: any) {
     console.error('[public/partner-applications]', e);
