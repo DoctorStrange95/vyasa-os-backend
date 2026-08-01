@@ -27,7 +27,7 @@ import orgRouter from './routes/org';
 import prescriptionsRouter from './routes/prescriptions';
 import labsRouter from './routes/labs';
 import dischargeRouter from './routes/discharge';
-import { AuthPayload } from './middleware/auth';
+import { requireAuth, requireSuperAdmin, AuthPayload } from './middleware/auth';
 
 const app = express();
 const server = http.createServer(app);
@@ -281,7 +281,6 @@ app.get('/health', (_req, res) => {
 });
 
 // ─── Public profile settings (authenticated) ──────────────────────────────────
-import { requireAuth } from './middleware/auth';
 
 app.patch('/auth/me/public-profile', requireAuth, async (req, res) => {
   const userId = req.user!.userId;
@@ -492,9 +491,9 @@ app.patch('/booking-requests/:id', requireAuth, async (req, res) => {
   } catch (e: any) { res.status(500).json({ error: e.message }); }
 });
 
-// ─── Admin: Approvals & Rejections ────────────────────────────────────────────
+// ─── Admin: Approvals & Rejections — requireSuperAdmin guards all ────────────
 
-app.post('/admin/users/:id/approve', async (req, res) => {
+app.post('/admin/users/:id/approve', requireSuperAdmin, async (req, res) => {
   const userId = Number(req.params.id);
 
   try {
@@ -519,7 +518,7 @@ app.post('/admin/users/:id/approve', async (req, res) => {
   }
 });
 
-app.post('/admin/users/:id/reject', async (req, res) => {
+app.post('/admin/users/:id/reject', requireSuperAdmin, async (req, res) => {
   const userId = Number(req.params.id);
   const { reason } = req.body;
 
@@ -550,7 +549,7 @@ app.post('/admin/users/:id/reject', async (req, res) => {
   }
 });
 
-app.post('/admin/users/:id/delete', async (req, res) => {
+app.post('/admin/users/:id/delete', requireSuperAdmin, async (req, res) => {
   const userId = Number(req.params.id);
 
   try {
@@ -633,7 +632,7 @@ app.post('/feedback', requireAuth, async (req, res) => {
 
 // ─── Email Service ────────────────────────────────────────────────────────────
 
-app.post('/api/send-email', async (req, res) => {
+app.post('/api/send-email', requireAuth, async (req, res) => {
   const { to, subject, body, templateName, bcc } = req.body;
 
   if (!to || !subject || !body) {
@@ -729,7 +728,11 @@ app.post('/api/drugs', requireAuth, async (req, res) => {
 app.use((err: Error, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
   console.error('[unhandled route error]', err);
   if (res.headersSent) return;
-  res.status(500).json({ error: 'Internal server error' });
+  // In production, never expose raw error messages (may leak DB schema/internals)
+  const message = process.env.NODE_ENV === 'production'
+    ? 'An unexpected error occurred. Please try again.'
+    : err.message;
+  res.status(500).json({ error: message });
 });
 
 // ─── Boot ─────────────────────────────────────────────────────────────────────
@@ -739,18 +742,22 @@ const PORT = Number(process.env.PORT ?? 3001);
 async function start() {
   await runMigrations();
 
-  // Ensure superadmin exists
-  const [sa] = await sql`SELECT id FROM users WHERE role = 'superadmin' LIMIT 1`;
-  if (!sa) {
-    const saEmail = process.env.SUPERADMIN_EMAIL ?? 'admin@vyasa.health';
-    const saPass = process.env.SUPERADMIN_PASSWORD ?? 'VyasaAdmin2024!';
-    const hash = await bcrypt.hash(saPass, 12);
-    await sql`
-      INSERT INTO users (name, email, password_hash, role, approval_status)
-      VALUES ('Vyasa Admin', ${saEmail}, ${hash}, 'superadmin', 'approved')
-      ON CONFLICT DO NOTHING
-    `;
-    console.log(`🔑 Superadmin created: ${saEmail}`);
+  // Ensure superadmin exists — credentials MUST come from env vars, never hardcoded
+  const saEmail = process.env.SUPERADMIN_EMAIL;
+  const saPass  = process.env.SUPERADMIN_PASSWORD;
+  if (saEmail && saPass) {
+    const [sa] = await sql`SELECT id FROM users WHERE role = 'superadmin' LIMIT 1`;
+    if (!sa) {
+      const hash = await bcrypt.hash(saPass, 12);
+      await sql`
+        INSERT INTO users (name, email, password_hash, role, approval_status)
+        VALUES ('Vyasa Admin', ${saEmail}, ${hash}, 'superadmin', 'approved')
+        ON CONFLICT DO NOTHING
+      `;
+      console.log(`🔑 Superadmin bootstrapped: ${saEmail}`);
+    }
+  } else {
+    console.warn('⚠️  SUPERADMIN_EMAIL / SUPERADMIN_PASSWORD not set — superadmin not bootstrapped');
   }
 
   server.listen(PORT, () => {

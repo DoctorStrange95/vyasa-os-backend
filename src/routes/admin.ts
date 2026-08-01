@@ -1,17 +1,9 @@
 import { Router, Request, Response } from 'express';
-import { requireAuth } from '../middleware/auth';
+import { requireAuth, requireSuperAdmin } from '../middleware/auth';
 import sql from '../db';
 import { sendMail, approvalEmail } from '../lib/mailer';
 
 const router = Router();
-
-function requireSuperAdmin(req: Request, res: Response, next: () => void) {
-  if (req.user?.role !== 'superadmin') {
-    res.status(403).json({ error: 'Superadmin access required' });
-    return;
-  }
-  next();
-}
 
 router.use(requireAuth);
 router.use(requireSuperAdmin);

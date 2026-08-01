@@ -27,7 +27,7 @@ router.get('/pending', async (req: Request, res: Response) => {
            invited_clinic_ids, invited_clinic_name, invited_by_user_id, created_at
     FROM users
     WHERE approval_status = 'pending'
-      AND role NOT IN ('clinic_admin', 'superadmin', 'patient')
+      AND role NOT IN ('clinic_admin', 'clinic_manager', 'superadmin', 'patient')
     ORDER BY created_at DESC
   `;
   const scoped = pending.filter(p => {
@@ -59,7 +59,7 @@ router.get('/active', async (req: Request, res: Response) => {
     SELECT id, name, email, phone, role, degrees, specialty, department, clinic_id, created_at
     FROM users
     WHERE approval_status = 'approved'
-      AND role NOT IN ('clinic_admin', 'superadmin', 'patient')
+      AND role NOT IN ('clinic_admin', 'clinic_manager', 'superadmin', 'patient')
       AND invited_by_user_id = ${userId}
     ORDER BY name
   `;
@@ -71,7 +71,7 @@ router.get('/active', async (req: Request, res: Response) => {
       SELECT id, name, email, phone, role, degrees, specialty, department, clinic_id, created_at
       FROM users
       WHERE approval_status = 'approved'
-        AND role NOT IN ('clinic_admin', 'superadmin', 'patient')
+        AND role NOT IN ('clinic_admin', 'clinic_manager', 'superadmin', 'patient')
         AND invited_by_user_id IS NULL
         AND clinic_id = ANY(${clinicIds})
       ORDER BY name
@@ -141,7 +141,7 @@ router.post('/:id/approve', async (req: Request, res: Response) => {
 // Used by clinic_admin when adding staff manually from the UI
 router.post('/create', async (req: Request, res: Response) => {
   const user = req.user!;
-  if (user.role !== 'clinic_admin' && user.role !== 'superadmin') {
+  if (user.role !== 'clinic_admin' && user.role !== 'clinic_manager' && user.role !== 'superadmin') {
     res.status(403).json({ error: 'Only clinic admins can create staff directly' });
     return;
   }

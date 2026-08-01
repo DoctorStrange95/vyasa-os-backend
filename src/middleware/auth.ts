@@ -33,3 +33,13 @@ export function requireAuth(req: Request, res: Response, next: NextFunction) {
     res.status(401).json({ error: 'Invalid or expired token' });
   }
 }
+
+export function requireSuperAdmin(req: Request, res: Response, next: NextFunction) {
+  requireAuth(req, res, () => {
+    if (req.user?.role !== 'superadmin') {
+      res.status(403).json({ error: 'Superadmin access required' });
+      return;
+    }
+    next();
+  });
+}

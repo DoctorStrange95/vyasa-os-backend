@@ -1,4 +1,20 @@
-node_modules/
-dist/
+# Environment
 .env
-*.env.local
+.env.local
+.env.production
+
+# Build output
+dist/
+
+# Dependencies
+node_modules/
+
+# Database files (may contain PHI)
+*.db
+server.db
+
+# Test / seed scripts — not needed in production
+test-*.js
+test-*.ts
+scripts/create-test-doctors.ts
+scripts/seed-demo-doctors.ts

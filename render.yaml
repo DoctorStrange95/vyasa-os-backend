@@ -8,17 +8,26 @@ services:
     envVars:
       - key: NODE_ENV
         value: production
+      # ── Secrets — set these in the Render dashboard, never commit values ──
       - key: DATABASE_URL
         sync: false
       - key: JWT_SECRET
-        value: vyasa-health-jwt-secret-2024-production-fixed
+        sync: false
       - key: JWT_REFRESH_SECRET
-        value: vyasa-health-refresh-secret-2024-production-fixed
+        sync: false
       - key: GOOGLE_CLIENT_ID
         sync: false
-      - key: CLIENT_ORIGIN
-        value: https://vyasa-health-os.pages.dev
       - key: SUPERADMIN_EMAIL
         sync: false
       - key: SUPERADMIN_PASSWORD
         sync: false
+      # ── Optional: Email + WhatsApp ──
+      - key: BREVO_API_KEY
+        sync: false
+      - key: WHATSAPP_TOKEN
+        sync: false
+      - key: WHATSAPP_PHONE_ID
+        sync: false
+      # ── CORS origin ──
+      - key: CLIENT_ORIGIN
+        value: https://app.vyasaa.com

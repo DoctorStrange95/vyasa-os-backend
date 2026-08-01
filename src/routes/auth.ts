@@ -70,7 +70,8 @@ router.post('/register', async (req: Request, res: Response) => {
   const passwordHash = await bcrypt.hash(password, 12);
   const effectiveRole = role ?? 'clinic_admin';
   // Superadmins are auto-approved; all others start as pending until license verified
-  const approvalStatus = effectiveRole === 'superadmin' ? 'approved' : 'pending';
+  // Superadmins and clinic managers are auto-approved; all others start as pending until license verified
+  const approvalStatus = (effectiveRole === 'superadmin' || effectiveRole === 'clinic_manager') ? 'approved' : 'pending';
 
   // Check existing. A previously REJECTED account is allowed to reapply — we
   // reuse the same row (overwriting it with the new application and resetting

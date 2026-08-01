@@ -19,6 +19,15 @@ router.post('/register', async (req: Request, res: Response) => {
   if (!['clinic', 'hospital'].includes(org_type)) {
     return res.status(400).json({ error: 'org_type must be clinic or hospital' });
   }
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(admin_email)) {
+    return res.status(400).json({ error: 'Invalid email address' });
+  }
+  if (admin_password.length < 6) {
+    return res.status(400).json({ error: 'Password must be at least 6 characters' });
+  }
+  if (org_name.trim().length < 2) {
+    return res.status(400).json({ error: 'Organisation name too short' });
+  }
 
   try {
     const [existing] = await sql`SELECT id FROM users WHERE email = ${admin_email.toLowerCase().trim()}`;
@@ -27,44 +36,66 @@ router.post('/register', async (req: Request, res: Response) => {
     const hash = await bcrypt.hash(admin_password, 10);
     const orgId = `org_${Date.now()}`;
 
-    // Create admin user first
-    const [adminUser] = await sql`
-      INSERT INTO users (name, email, password_hash, role, phone, specialty, approval_status, org_id)
-      VALUES (
-        ${admin_name.trim()}, ${admin_email.toLowerCase().trim()},
-        ${hash}, 'clinic_admin', ${admin_phone ?? ''}, ${admin_specialty ?? ''},
-        'approved', ${orgId}
-      )
-      RETURNING id, name, email, role
-    `;
+    // Run org INSERT + user INSERT in a single transaction so the FK check
+    // on users.org_id always sees the organizations row.
+    // Neon HTTP pooling can route separate sql`` calls to different connections,
+    // causing the FK check to fail because the org row isn't yet visible.
+    //
+    // Neon's transaction() callback must be synchronous and return an array of
+    // tagged-template queries — we can't await inside it.  All dynamic values
+    // (hash, orgId, etc.) are captured from the outer closure.
+    const adminName    = admin_name.trim();
+    const adminEmail   = admin_email.toLowerCase().trim();
+    const orgName      = org_name.trim();
+    const addrVal      = address ?? '';
+    const cityVal      = city ?? '';
+    const stateVal     = state ?? '';
+    const phoneVal     = phone ?? '';
+    const emailVal     = email ?? '';
+    const gstinVal     = gstin ?? '';
+    const adminPhone   = admin_phone ?? '';
+    const adminSpec    = admin_specialty ?? '';
 
-    // Create organization
-    await sql`
-      INSERT INTO organizations (id, name, type, address, city, state, phone, email, gstin, owner_id)
-      VALUES (
-        ${orgId}, ${org_name.trim()}, ${org_type},
-        ${address ?? ''}, ${city ?? ''}, ${state ?? ''},
-        ${phone ?? ''}, ${email ?? ''}, ${gstin ?? ''},
-        ${adminUser.id as number}
-      )
-    `;
+    // Step 1: create org + user in a single atomic transaction
+    const [_orgRow, adminUser] = await sql.transaction([
+      sql`
+        INSERT INTO organizations (id, name, type, address, city, state, phone, email, gstin, owner_id)
+        VALUES (
+          ${orgId}, ${orgName}, ${org_type},
+          ${addrVal}, ${cityVal}, ${stateVal},
+          ${phoneVal}, ${emailVal}, ${gstinVal},
+          NULL
+        )
+      `,
+      sql`
+        INSERT INTO users (name, email, password_hash, role, phone, specialty, approval_status, org_id)
+        VALUES (
+          ${adminName}, ${adminEmail}, ${hash},
+          'clinic_manager', ${adminPhone}, ${adminSpec},
+          'approved', ${orgId}
+        )
+        RETURNING id, name, email, role
+      `,
+    ]) as [unknown[], { id: number; name: string; email: string; role: string }[]];
 
-    // Add admin as org member
+    const userId = adminUser[0].id;
+
+    // Step 2: link org back to admin, add org_members row, create default clinic
+    // (these can run sequentially — the hard FK constraint is already resolved)
+    await sql`UPDATE organizations SET owner_id = ${userId} WHERE id = ${orgId}`;
     await sql`
       INSERT INTO org_members (org_id, user_id, role, department)
-      VALUES (${orgId}, ${adminUser.id as number}, 'clinic_admin', 'Administration')
+      VALUES (${orgId}, ${userId}, 'clinic_admin', 'Administration')
     `;
-
-    // Create a default clinic under this org
-    const clinicId = `clinic_${adminUser.id}`;
+    const clinicId = `clinic_${userId}`;
     await sql`
       INSERT INTO clinics (id, owner_id, name, address, fee, max_patients)
-      VALUES (${clinicId}, ${adminUser.id as number}, ${org_name.trim()}, ${address ?? ''}, 200, 30)
+      VALUES (${clinicId}, ${userId}, ${orgName}, ${addrVal}, 200, 30)
       ON CONFLICT DO NOTHING
     `;
-    await sql`UPDATE users SET clinic_id = ${clinicId} WHERE id = ${adminUser.id}`;
+    await sql`UPDATE users SET clinic_id = ${clinicId} WHERE id = ${userId}`;
 
-    res.json({ success: true, org_id: orgId, admin: adminUser });
+    res.json({ success: true, org_id: orgId, admin: adminUser[0] });
   } catch (e: any) {
     console.error('[org/register]', e);
     res.status(500).json({ error: e.message });
@@ -122,7 +153,7 @@ router.post('/staff', requireAuth, async (req: Request, res: Response) => {
   try {
     const [admin] = await sql`SELECT org_id, role AS admin_role FROM users WHERE id = ${adminId}`;
     if (!admin?.org_id) return res.status(403).json({ error: 'Not part of an organization' });
-    if (!['clinic_admin', 'admin'].includes(admin.admin_role as string)) {
+    if (!['clinic_admin', 'admin', 'clinic_manager'].includes(admin.admin_role as string)) {
       return res.status(403).json({ error: 'Only admins can add staff' });
     }
 
@@ -174,7 +205,7 @@ router.patch('/staff/:id', requireAuth, async (req: Request, res: Response) => {
 
   try {
     const [admin] = await sql`SELECT org_id, role AS admin_role FROM users WHERE id = ${adminId}`;
-    if (!admin?.org_id || !['clinic_admin', 'admin'].includes(admin.admin_role as string)) {
+    if (!admin?.org_id || !['clinic_admin', 'admin', 'clinic_manager'].includes(admin.admin_role as string)) {
       return res.status(403).json({ error: 'Unauthorized' });
     }
     await sql`
@@ -197,7 +228,7 @@ router.delete('/staff/:id', requireAuth, async (req: Request, res: Response) => 
 
   try {
     const [admin] = await sql`SELECT org_id, role AS admin_role FROM users WHERE id = ${adminId}`;
-    if (!admin?.org_id || !['clinic_admin', 'admin'].includes(admin.admin_role as string)) {
+    if (!admin?.org_id || !['clinic_admin', 'admin', 'clinic_manager'].includes(admin.admin_role as string)) {
       return res.status(403).json({ error: 'Unauthorized' });
     }
     await sql`DELETE FROM org_members WHERE org_id = ${admin.org_id as string} AND user_id = ${targetId}`;
