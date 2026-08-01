@@ -653,6 +653,14 @@ app.post('/api/send-email', async (req, res) => {
       ? String(bcc).split(',').map((e: string) => e.trim()).filter(Boolean).map((email: string) => ({ email }))
       : undefined;
 
+    // The app.vyasaa.com asset is served by the frequently deployed PWA and
+    // Gmail's image proxy intermittently caches it as unavailable. Use the
+    // stable landing-domain PNG already used by our transactional mailer.
+    const emailBody = String(body).replaceAll(
+      'https://app.vyasaa.com/email-assets/vyasa-email-logo-v1.jpg',
+      'https://www.vyasaa.com/logo.png',
+    );
+
     // Send via Brevo HTTP API
     const response = await fetch('https://api.brevo.com/v3/smtp/email', {
       method: 'POST',
@@ -665,7 +673,7 @@ app.post('/api/send-email', async (req, res) => {
         sender: { email: 'support@vyasaa.com', name: 'Vyasa Health' },
         ...(bccList?.length ? { bcc: bccList } : {}),
         subject,
-        htmlContent: body.replace(/\n/g, '<br>'),
+        htmlContent: emailBody.replace(/\n/g, '<br>'),
       }),
     });
 
