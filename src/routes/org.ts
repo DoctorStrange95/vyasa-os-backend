@@ -35,53 +35,35 @@ router.post('/register', async (req: Request, res: Response) => {
 
     const hash = await bcrypt.hash(admin_password, 10);
     const orgId = `org_${Date.now()}`;
+    const adminName  = admin_name.trim();
+    const adminEmail = admin_email.toLowerCase().trim();
+    const orgName    = org_name.trim();
 
-    // Run org INSERT + user INSERT in a single transaction so the FK check
-    // on users.org_id always sees the organizations row.
-    // Neon HTTP pooling can route separate sql`` calls to different connections,
-    // causing the FK check to fail because the org row isn't yet visible.
-    //
-    // Neon's transaction() callback must be synchronous and return an array of
-    // tagged-template queries — we can't await inside it.  All dynamic values
-    // (hash, orgId, etc.) are captured from the outer closure.
-    const adminName    = admin_name.trim();
-    const adminEmail   = admin_email.toLowerCase().trim();
-    const orgName      = org_name.trim();
-    const addrVal      = address ?? '';
-    const cityVal      = city ?? '';
-    const stateVal     = state ?? '';
-    const phoneVal     = phone ?? '';
-    const emailVal     = email ?? '';
-    const gstinVal     = gstin ?? '';
-    const adminPhone   = admin_phone ?? '';
-    const adminSpec    = admin_specialty ?? '';
+    // 1. Create org (owner_id = NULL initially)
+    await sql`
+      INSERT INTO organizations (id, name, type, address, city, state, phone, email, gstin, owner_id)
+      VALUES (
+        ${orgId}, ${orgName}, ${org_type},
+        ${address ?? ''}, ${city ?? ''}, ${state ?? ''},
+        ${phone ?? ''}, ${email ?? ''}, ${gstin ?? ''},
+        NULL
+      )
+    `;
 
-    // Step 1: create org + user in a single atomic transaction
-    const [_orgRow, adminUser] = await sql.transaction([
-      sql`
-        INSERT INTO organizations (id, name, type, address, city, state, phone, email, gstin, owner_id)
-        VALUES (
-          ${orgId}, ${orgName}, ${org_type},
-          ${addrVal}, ${cityVal}, ${stateVal},
-          ${phoneVal}, ${emailVal}, ${gstinVal},
-          NULL
-        )
-      `,
-      sql`
-        INSERT INTO users (name, email, password_hash, role, phone, specialty, approval_status, org_id)
-        VALUES (
-          ${adminName}, ${adminEmail}, ${hash},
-          'clinic_manager', ${adminPhone}, ${adminSpec},
-          'approved', ${orgId}
-        )
-        RETURNING id, name, email, role
-      `,
-    ]) as [unknown[], { id: number; name: string; email: string; role: string }[]];
+    // 2. Create admin user — org_id has no FK constraint so this always works
+    const [adminUser] = await sql`
+      INSERT INTO users (name, email, password_hash, role, phone, specialty, approval_status, org_id)
+      VALUES (
+        ${adminName}, ${adminEmail}, ${hash},
+        'clinic_manager', ${admin_phone ?? ''}, ${admin_specialty ?? ''},
+        'approved', ${orgId}
+      )
+      RETURNING id, name, email, role
+    `;
 
-    const userId = adminUser[0].id;
+    const userId = adminUser.id as number;
 
-    // Step 2: link org back to admin, add org_members row, create default clinic
-    // (these can run sequentially — the hard FK constraint is already resolved)
+    // 3. Back-fill owner, add org member, create default clinic
     await sql`UPDATE organizations SET owner_id = ${userId} WHERE id = ${orgId}`;
     await sql`
       INSERT INTO org_members (org_id, user_id, role, department)
@@ -90,12 +72,12 @@ router.post('/register', async (req: Request, res: Response) => {
     const clinicId = `clinic_${userId}`;
     await sql`
       INSERT INTO clinics (id, owner_id, name, address, fee, max_patients)
-      VALUES (${clinicId}, ${userId}, ${orgName}, ${addrVal}, 200, 30)
+      VALUES (${clinicId}, ${userId}, ${orgName}, ${address ?? ''}, 200, 30)
       ON CONFLICT DO NOTHING
     `;
     await sql`UPDATE users SET clinic_id = ${clinicId} WHERE id = ${userId}`;
 
-    res.json({ success: true, org_id: orgId, admin: adminUser[0] });
+    res.json({ success: true, org_id: orgId, admin: adminUser });
   } catch (e: any) {
     console.error('[org/register]', e);
     res.status(500).json({ error: e.message });

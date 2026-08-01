@@ -531,8 +531,25 @@ export async function runMigrations() {
   await sql`CREATE INDEX IF NOT EXISTS idx_org_members_org ON org_members(org_id)`;
   await sql`CREATE INDEX IF NOT EXISTS idx_org_members_user ON org_members(user_id)`;
 
-  // Link users to their organization
-  await sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS org_id TEXT REFERENCES organizations(id)`;
+  // Link users to their organization.
+  // NOTE: No FK constraint — Neon HTTP pooler routes calls to different connections,
+  // so a FK on org_id causes "users_org_id_fkey" violations during org/register even
+  // when the org row is inserted first. App-level ordering guarantees integrity.
+  await sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS org_id TEXT`;
+
+  // Drop the FK constraint if it exists from a previous migration run
+  await sql`
+    DO $$
+    BEGIN
+      IF EXISTS (
+        SELECT 1 FROM information_schema.table_constraints
+        WHERE constraint_name = 'users_org_id_fkey'
+          AND table_name = 'users'
+      ) THEN
+        ALTER TABLE users DROP CONSTRAINT users_org_id_fkey;
+      END IF;
+    END$$
+  `;
 
   // ── Billing / Invoices ────────────────────────────────────────────────────
   await sql`
