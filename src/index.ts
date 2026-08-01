@@ -653,12 +653,11 @@ app.post('/api/send-email', async (req, res) => {
       ? String(bcc).split(',').map((e: string) => e.trim()).filter(Boolean).map((email: string) => ({ email }))
       : undefined;
 
-    // The app.vyasaa.com asset is served by the frequently deployed PWA and
-    // Gmail's image proxy intermittently caches it as unavailable. Use the
-    // stable landing-domain PNG already used by our transactional mailer.
+    // Restore the original email logo URL used by the previously reliable
+    // production template. The SVG asset itself has remained unchanged.
     const emailBody = String(body).replaceAll(
       'https://app.vyasaa.com/email-assets/vyasa-email-logo-v1.jpg',
-      'https://www.vyasaa.com/logo.png',
+      'https://app.vyasaa.com/logo.svg',
     );
 
     // Send via Brevo HTTP API
