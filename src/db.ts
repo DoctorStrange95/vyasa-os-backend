@@ -796,6 +796,13 @@ export async function runMigrations() {
   `;
   await sql`CREATE INDEX IF NOT EXISTS idx_partner_applications_status_time ON partner_applications(status, created_at DESC)`;
 
+  // ── Role correction: org-registered users must be clinic_manager, not clinic_admin ──
+  // Old backend code inserted 'clinic_admin' for org/register users. Fix any that slipped through.
+  await sql`
+    UPDATE users SET role = 'clinic_manager'
+    WHERE org_id IS NOT NULL AND role = 'clinic_admin'
+  `;
+
   console.log('✅ DB migrations complete');
 }
 
