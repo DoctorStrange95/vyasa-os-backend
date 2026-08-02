@@ -29,7 +29,7 @@ const RegisterSchema = z.object({
 });
 
 const LoginSchema = z.object({
-  email: z.string().email(),
+  email: z.string().min(1),   // accepts email OR phone — validated below
   password: z.string(),
   lat: z.number().optional(),
   lng: z.number().optional(),
@@ -190,10 +190,20 @@ router.post('/login', async (req: Request, res: Response) => {
   }
   const { email, password, lat, lng, locationLabel } = parsed.data;
 
-  const [user] = await sql`
-    SELECT id, name, email, role, password_hash, specialty, degrees, phone, clinic_id, approval_status, consent_given_at
-    FROM users WHERE email = ${email}
-  `;
+  // Accept email OR phone number in the identifier field
+  const identifier = email.trim().toLowerCase();
+  const isPhone = /^\+?[\d\s\-()]{7,15}$/.test(identifier.replace(/\s/g, ''));
+
+  const [user] = isPhone
+    ? await sql`
+        SELECT id, name, email, role, password_hash, specialty, degrees, phone, clinic_id, approval_status, consent_given_at
+        FROM users WHERE REGEXP_REPLACE(phone, '[^0-9]', '', 'g') = REGEXP_REPLACE(${identifier}, '[^0-9]', '', 'g')
+        ORDER BY id LIMIT 1
+      `
+    : await sql`
+        SELECT id, name, email, role, password_hash, specialty, degrees, phone, clinic_id, approval_status, consent_given_at
+        FROM users WHERE email = ${identifier}
+      `;
   if (!user) {
     res.status(401).json({ error: 'Invalid email or password' });
     return;
