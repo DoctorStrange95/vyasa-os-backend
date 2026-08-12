@@ -1,0 +1,647 @@
+"use strict";
+var __importDefault = (this && this.__importDefault) || function (mod) {
+    return (mod && mod.__esModule) ? mod : { "default": mod };
+};
+Object.defineProperty(exports, "__esModule", { value: true });
+const express_1 = require("express");
+const db_1 = __importDefault(require("../db"));
+const mailer_1 = require("../lib/mailer");
+const whatsapp_1 = require("../lib/whatsapp");
+const router = (0, express_1.Router)();
+// Generate HH:MM time slots between start and end at given interval (minutes)
+function generateSlots(start, end, intervalMins = 15) {
+    const slots = [];
+    const [sh, sm] = start.split(':').map(Number);
+    const [eh, em] = end.split(':').map(Number);
+    let cur = sh * 60 + sm;
+    const endMin = eh * 60 + em;
+    while (cur + intervalMins <= endMin) {
+        const h = Math.floor(cur / 60).toString().padStart(2, '0');
+        const m = (cur % 60).toString().padStart(2, '0');
+        slots.push(`${h}:${m}`);
+        cur += intervalMins;
+    }
+    return slots;
+}
+// IST = UTC+5:30. Server runs in UTC so all date/time ops need +330 min offset.
+function istNow() {
+    return new Date(Date.now() + 5.5 * 60 * 60 * 1000);
+}
+function dateStr(offsetDays = 0) {
+    const d = istNow();
+    d.setDate(d.getDate() + offsetDays);
+    return d.toISOString().slice(0, 10);
+}
+function istTimeStr() {
+    return istNow().toISOString().slice(11, 16); // HH:MM in IST
+}
+// ─── GET /public/doctor/:slug ─────────────────────────────────────────────────
+router.get('/doctor/:slug', async (req, res) => {
+    const { slug } = req.params;
+    try {
+        const rows = await (0, db_1.default) `
+      SELECT u.id, u.name, u.specialty, u.degrees,
+             CASE WHEN u.show_reg_number = true THEN COALESCE(u.reg_number, u.license_number, p.reg_number) ELSE '' END AS reg_number,
+             (COALESCE(u.reg_number, u.license_number, p.reg_number) IS NOT NULL AND COALESCE(u.reg_number, u.license_number, p.reg_number) != '') AS nmc_verified,
+             u.bio, u.languages, u.accepting_patients, u.gbp_url,
+             u.years_experience, u.consultation_fee, u.profile_slug,
+             u.public_profile_enabled, u.profile_photo_url, u.clinic_id,
+             u.education, u.services, u.awards,
+             u.advance_payment, u.advance_amount, u.payment_qr_url,
+             p.doctor_name, p.clinic_name, p.address, p.phone, p.email, p.timings
+      FROM users u
+      LEFT JOIN pad_settings p ON p.user_id = u.id
+      WHERE u.profile_slug = ${slug}
+        AND u.public_profile_enabled = true
+        AND u.approval_status = 'approved'
+    `;
+        if (!rows.length) {
+            res.status(404).json({ error: 'Doctor not found' });
+            return;
+        }
+        const r = rows[0];
+        // Fetch ALL clinics this doctor is associated with:
+        // primary clinic_id, clinics they own, and clinics they were invited to
+        const clinicIds = [];
+        if (r.clinic_id)
+            clinicIds.push(r.clinic_id);
+        const staffRows = await (0, db_1.default) `SELECT invited_clinic_ids FROM users WHERE id = ${r.id}`;
+        if (staffRows[0]?.invited_clinic_ids) {
+            const extra = staffRows[0].invited_clinic_ids.split(',').map((s) => s.trim()).filter(Boolean);
+            for (const cid of extra)
+                if (!clinicIds.includes(cid))
+                    clinicIds.push(cid);
+        }
+        const clinics = await (0, db_1.default) `
+      SELECT DISTINCT id, name, address, phone, timings, schedule,
+                      state, city, pincode, lat, lng
+      FROM clinics
+      WHERE id = ANY(${clinicIds.length ? clinicIds : ['__none__']}) OR owner_id = ${r.id}
+    `;
+        res.json({
+            id: r.id,
+            name: r.doctor_name || r.name,
+            specialty: r.specialty || '',
+            qualification: r.degrees || '',
+            regNumber: r.reg_number || '',
+            nmcVerified: r.nmc_verified === true,
+            bio: r.bio || '',
+            languages: r.languages || '',
+            acceptingPatients: r.accepting_patients !== false,
+            gbpUrl: r.gbp_url || '',
+            yearsExperience: r.years_experience || 0,
+            consultationFee: r.consultation_fee || null,
+            profileSlug: r.profile_slug,
+            profilePhotoUrl: r.profile_photo_url || '',
+            education: r.education || '',
+            services: r.services || '',
+            awards: r.awards || '',
+            // Advance payment (QR shown to patients only when enabled with an amount)
+            advancePayment: r.advance_payment === true && Number(r.advance_amount) > 0,
+            advanceAmount: r.advance_payment === true ? (r.advance_amount ?? null) : null,
+            paymentQrUrl: r.advance_payment === true ? (r.payment_qr_url || '') : '',
+            // Primary clinic (from pad_settings for display)
+            clinicName: r.clinic_name || '',
+            clinicAddress: r.address || '',
+            clinicPhone: r.phone || '',
+            clinicEmail: r.email || '',
+            timings: r.timings || '',
+            // All clinics
+            clinics: clinics.map(c => ({
+                id: c.id,
+                name: c.name,
+                address: c.address || '',
+                phone: c.phone || '',
+                timings: c.timings || '',
+                state: c.state || '',
+                city: c.city || '',
+                pincode: c.pincode || '',
+                lat: c.lat != null ? Number(c.lat) : null,
+                lng: c.lng != null ? Number(c.lng) : null,
+                hasSchedule: Array.isArray(c.schedule) && c.schedule.some(d => d.open),
+            })),
+        });
+    }
+    catch (e) {
+        res.status(500).json({ error: e.message });
+    }
+});
+// ─── GET /public/doctor/:slug/slots?days=14&interval=15 ──────────────────────
+// Returns available time slots per day for the next N days
+router.get('/doctor/:slug/slots', async (req, res) => {
+    const { slug } = req.params;
+    const days = Math.min(Number(req.query.days ?? 14), 30);
+    const interval = Number(req.query.interval ?? 15); // slot duration in minutes
+    const requestedClinic = req.query.clinic_id?.trim() || null;
+    try {
+        const doctors = await (0, db_1.default) `
+      SELECT u.id, u.clinic_id FROM users u
+      WHERE u.profile_slug = ${slug} AND u.public_profile_enabled = true
+        AND u.accepting_patients = true
+    `;
+        if (!doctors.length) {
+            res.status(404).json({ error: 'Doctor not found or not accepting patients' });
+            return;
+        }
+        const doctorId = doctors[0].id;
+        const clinicId = doctors[0].clinic_id;
+        // With ?clinic_id= use only that chamber's schedule; otherwise merge all.
+        // (Either way, booked-slot conflicts are checked per DOCTOR — they can't
+        // be in two chambers at the same time.)
+        const clinicRows = requestedClinic
+            ? await (0, db_1.default) `
+          SELECT schedule, max_patients FROM clinics
+          WHERE id = ${requestedClinic}
+            AND (id = ${clinicId ?? '__none__'} OR owner_id = ${doctorId})
+        `
+            : await (0, db_1.default) `
+          SELECT schedule, max_patients FROM clinics
+          WHERE id = ${clinicId ?? '__none__'} OR owner_id = ${doctorId}
+        `;
+        if (requestedClinic && !clinicRows.length) {
+            res.status(404).json({ error: 'Clinic not found for this doctor' });
+            return;
+        }
+        // Merge per-day: a day is open if ANY clinic is open; sessions are unioned
+        const schedule = [];
+        for (let day = 0; day < 7; day++) {
+            const merged = { day, open: false, sessions: [], maxPatients: 0 };
+            for (const row of clinicRows) {
+                const cs = row.schedule ?? [];
+                const ds = cs.find(s => s.day === day);
+                if (ds?.open && ds.sessions?.length) {
+                    merged.open = true;
+                    for (const sess of ds.sessions) {
+                        if (!merged.sessions.some(s => s.start === sess.start && s.end === sess.end)) {
+                            merged.sessions.push(sess);
+                        }
+                    }
+                    merged.maxPatients += ds.maxPatients ?? row.max_patients ?? 20;
+                }
+            }
+            merged.sessions.sort((a, b) => a.start.localeCompare(b.start));
+            if (merged.open)
+                schedule.push(merged);
+        }
+        const globalCap = clinicRows.reduce((acc, r) => acc + (r.max_patients ?? 20), 0) || 20;
+        // Dates we'll generate slots for — start today, one entry per day
+        const targetDates = Array.from({ length: days }, (_, i) => dateStr(i));
+        // Fetch already-booked slots in that range (booking_requests + appointments)
+        const fromDate = targetDates[0];
+        const toDate = targetDates[targetDates.length - 1];
+        const bookedRequests = await (0, db_1.default) `
+      SELECT preferred_date, preferred_time, status FROM booking_requests
+      WHERE doctor_id = ${doctorId}
+        AND preferred_date >= ${fromDate} AND preferred_date <= ${toDate}
+        AND status IN ('pending', 'confirmed')
+    `;
+        const bookedAppointments = await (0, db_1.default) `
+      SELECT date, time, status FROM appointments
+      WHERE doctor_id = ${doctorId}
+        AND date >= ${fromDate} AND date <= ${toDate}
+        AND status NOT IN ('cancelled', 'no-show')
+    `;
+        // Build a booked count map: { "2026-06-12": { "09:00": 2, "09:15": 1 } }
+        const bookedMap = {};
+        for (const r of [...bookedRequests, ...bookedAppointments]) {
+            const d = (r.preferred_date ?? r.date);
+            const t = (r.preferred_time ?? r.time)?.slice(0, 5) ?? '';
+            if (!d || !t)
+                continue;
+            if (!bookedMap[d])
+                bookedMap[d] = {};
+            bookedMap[d][t] = (bookedMap[d][t] ?? 0) + 1;
+        }
+        // Build per-day availability
+        const result = [];
+        for (const date of targetDates) {
+            const dayOfWeek = new Date(date + 'T00:00:00').getDay(); // 0=Sun
+            const daySchedule = schedule.find(s => s.day === dayOfWeek);
+            if (!daySchedule?.open || !daySchedule.sessions?.length)
+                continue;
+            const cap = daySchedule.maxPatients ?? globalCap;
+            const dayBooked = bookedMap[date] ?? {};
+            const totalBooked = Object.values(dayBooked).reduce((a, b) => a + b, 0);
+            if (totalBooked >= cap)
+                continue; // day fully booked
+            const allSlots = [];
+            for (const session of daySchedule.sessions) {
+                allSlots.push(...generateSlots(session.start, session.end, interval));
+            }
+            // Filter out slots that are already filled or in the past (compare in IST)
+            const nowDate = dateStr(0);
+            const nowTime = istTimeStr();
+            const available = allSlots.filter(t => {
+                if (date === nowDate && t <= nowTime)
+                    return false; // past slot today (IST)
+                return (dayBooked[t] ?? 0) === 0; // not already booked
+            });
+            const remaining = Math.max(0, cap - totalBooked);
+            // Return all pickable times; totalSlots carries the cap so the date card shows
+            // the patient limit rather than the raw time-interval count
+            if (available.length > 0 && remaining > 0) {
+                result.push({ date, slots: available, totalSlots: cap, bookedCount: totalBooked });
+            }
+        }
+        res.json({ days: result, interval });
+    }
+    catch (e) {
+        res.status(500).json({ error: e.message });
+    }
+});
+// ─── POST /public/doctor/:slug/book ──────────────────────────────────────────
+router.post('/doctor/:slug/book', async (req, res) => {
+    const { slug } = req.params;
+    const { patient_name, patient_phone, patient_email, patient_age, patient_gender, reason, preferred_date, preferred_time, clinic_id } = req.body;
+    if (!patient_name?.trim() || !patient_phone?.trim()) {
+        res.status(400).json({ error: 'Name and phone are required' });
+        return;
+    }
+    if (!preferred_date || !preferred_time) {
+        res.status(400).json({ error: 'Please select an appointment date and time' });
+        return;
+    }
+    try {
+        const doctors = await (0, db_1.default) `
+      SELECT id FROM users WHERE profile_slug = ${slug}
+        AND public_profile_enabled = true AND accepting_patients = true
+    `;
+        if (!doctors.length) {
+            res.status(404).json({ error: 'Doctor not found' });
+            return;
+        }
+        const doctorId = doctors[0].id;
+        // Idempotency: check if exact slot already booked
+        const existing = await (0, db_1.default) `
+      SELECT id FROM booking_requests
+      WHERE doctor_id = ${doctorId}
+        AND preferred_date = ${preferred_date}
+        AND preferred_time = ${preferred_time}
+        AND status IN ('pending', 'confirmed')
+    `;
+        if (existing.length) {
+            res.status(409).json({ error: 'This slot was just booked by someone else. Please choose another time.' });
+            return;
+        }
+        // Validate the chosen chamber belongs to this doctor (ignore if not)
+        let bookClinic = null;
+        if (clinic_id) {
+            const owned = await (0, db_1.default) `
+        SELECT c.id FROM clinics c
+        JOIN users u ON u.id = ${doctorId}
+        WHERE c.id = ${clinic_id} AND (c.owner_id = ${doctorId} OR c.id = u.clinic_id)
+      `;
+            if (owned.length)
+                bookClinic = clinic_id;
+        }
+        const genderVal = ['M', 'F', 'Other'].includes(patient_gender) ? patient_gender : 'M';
+        const [row] = await (0, db_1.default) `
+      INSERT INTO booking_requests
+        (doctor_id, clinic_id, patient_name, patient_phone, patient_email, patient_age, patient_gender, reason, preferred_date, preferred_time)
+      VALUES
+        (${doctorId}, ${bookClinic}, ${patient_name.trim()}, ${patient_phone.replace(/\D/g, '').slice(-10)},
+         ${patient_email?.trim() || ''},
+         ${patient_age ? Number(patient_age) : null}, ${genderVal}, ${reason?.trim() || ''},
+         ${preferred_date}, ${preferred_time})
+      RETURNING id, status, created_at
+    `;
+        // Notify the doctor by email + WhatsApp (fire-and-forget)
+        try {
+            const [doc] = await (0, db_1.default) `
+        SELECT u.name, u.email, u.phone, c.name AS clinic_name
+        FROM users u LEFT JOIN clinics c ON c.id = ${bookClinic}
+        WHERE u.id = ${doctorId}
+      `;
+            const cleanPhone = patient_phone.replace(/\D/g, '').slice(-10);
+            if (doc?.email) {
+                const mail = (0, mailer_1.newBookingDoctorEmail)({
+                    doctorName: doc.name,
+                    patientName: patient_name.trim(),
+                    patientPhone: cleanPhone,
+                    date: preferred_date, time: preferred_time,
+                    clinicName: doc.clinic_name || undefined,
+                    reason: reason?.trim() || undefined,
+                });
+                (0, mailer_1.sendMail)(doc.email, mail.subject, mail.html);
+            }
+            if (doc?.phone) {
+                (0, whatsapp_1.waNewBookingDoctor)(doc.phone, {
+                    patientName: patient_name.trim(), patientPhone: cleanPhone,
+                    date: preferred_date, time: preferred_time,
+                });
+            }
+        }
+        catch (e) {
+            console.error('[booking notify]', e);
+        }
+        res.status(201).json({ ok: true, id: row.id, status: row.status });
+    }
+    catch (e) {
+        res.status(500).json({ error: e.message });
+    }
+});
+// ─── GET /public/doctors/featured — homepage carousel ─────────────────────────
+router.get('/doctors/featured', async (req, res) => {
+    try {
+        const scheduleExists = (0, db_1.default) `
+      EXISTS (
+        SELECT 1 FROM clinics c2, jsonb_array_elements(c2.schedule) d
+        WHERE (c2.owner_id = u.id OR c2.id = u.clinic_id)
+          AND (d->>'open')::boolean
+      )`;
+        // Completeness score: profile photo heavily weighted
+        const completeness = (0, db_1.default) `
+      (CASE WHEN u.profile_photo_url IS NOT NULL AND u.profile_photo_url != '' THEN 5 ELSE 0 END
+       + CASE WHEN u.bio IS NOT NULL AND LENGTH(u.bio) > 20 THEN 2 ELSE 0 END
+       + CASE WHEN u.years_experience IS NOT NULL AND u.years_experience > 0 THEN 1 ELSE 0 END
+       + CASE WHEN u.city IS NOT NULL AND u.city != '' THEN 1 ELSE 0 END
+       + CASE WHEN u.consultation_fee IS NOT NULL THEN 1 ELSE 0 END
+       + CASE WHEN u.specialty IS NOT NULL AND u.specialty != '' THEN 1 ELSE 0 END)`;
+        // Dynamic score: bookings + recent login + profile completeness + has open schedule
+        const dynamicScore = (0, db_1.default) `
+      (
+        -- Booking activity: up to 10 pts
+        LEAST(COALESCE(br.total_bookings, 0), 10)
+        -- Recent login within 7 days: 5 pts
+        + CASE WHEN ls.last_login > NOW() - INTERVAL '7 days' THEN 5 ELSE 0 END
+        -- Recent login within 30 days: 2 pts
+        + CASE WHEN ls.last_login > NOW() - INTERVAL '30 days' THEN 2 ELSE 0 END
+        -- Accepting patients with open schedule: 4 pts
+        + CASE WHEN u.accepting_patients = true AND ${scheduleExists} THEN 4 ELSE 0 END
+        -- Profile completeness (matches ${completeness})
+        + ${completeness}
+      )`;
+        // Pinned (is_featured=true) doctors always first, rest ranked by dynamic score
+        const rows = await (0, db_1.default) `
+      SELECT u.id, u.name, u.specialty, u.degrees, u.profile_slug, u.profile_photo_url,
+             u.years_experience, u.consultation_fee, u.accepting_patients, u.city, u.state,
+             u.bio, u.is_featured,
+             p.doctor_name, p.clinic_name, p.address, p.timings, p.phone,
+             ${scheduleExists} AS has_schedule,
+             ${completeness} AS completeness,
+             ${dynamicScore} AS score
+      FROM users u
+      LEFT JOIN pad_settings p ON p.user_id = u.id
+      LEFT JOIN (
+        SELECT doctor_id, COUNT(*) AS total_bookings
+        FROM booking_requests GROUP BY doctor_id
+      ) br ON br.doctor_id = u.id
+      LEFT JOIN (
+        SELECT user_id, MAX(logged_in_at) AS last_login
+        FROM login_sessions GROUP BY user_id
+      ) ls ON ls.user_id = u.id
+      WHERE u.public_profile_enabled = true
+        AND u.approval_status = 'approved'
+        AND u.profile_slug IS NOT NULL
+        AND u.show_in_directory IS NOT false
+        AND u.profile_photo_url IS NOT NULL AND u.profile_photo_url != ''
+      ORDER BY
+        u.is_featured DESC NULLS LAST,
+        score DESC
+      LIMIT 6
+    `;
+        res.json({
+            doctors: rows.map(r => ({
+                id: r.id,
+                name: r.doctor_name || r.name,
+                specialty: r.specialty || '',
+                qualification: r.degrees || '',
+                profileSlug: r.profile_slug,
+                profilePhotoUrl: r.profile_photo_url || '',
+                yearsExperience: r.years_experience || 0,
+                consultationFee: r.consultation_fee || null,
+                bookingOpen: r.accepting_patients !== false && r.has_schedule === true,
+                city: r.city || '',
+                state: r.state || '',
+                clinicName: r.clinic_name || '',
+                clinicPhone: r.phone || '',
+                timings: r.timings || '',
+                bio: r.bio?.slice(0, 120) || '',
+                isFeatured: r.is_featured === true,
+            })),
+        });
+    }
+    catch (err) {
+        console.error('[public/doctors/featured]', err);
+        res.status(500).json({ error: 'Failed to load featured doctors' });
+    }
+});
+// ─── GET /public/doctors — doctor directory (no auth) ────────────────────────
+router.get('/doctors', async (req, res) => {
+    const { state, city, specialty, search, limit = '50', offset = '0', sort = 'booking' } = req.query;
+    // Whitelist the sort key; anything else falls back to the default (booking-open first).
+    const sortKey = ['booking', 'experience', 'newest', 'name'].includes(sort) ? sort : 'booking';
+    try {
+        // Build all filters without dynamic SQL — use nullable params pattern
+        const rows = await (0, db_1.default) `
+      SELECT u.id, u.name, u.specialty, u.degrees,
+             u.profile_slug, u.profile_photo_url,
+             u.years_experience, u.consultation_fee,
+             u.accepting_patients, u.city, u.state,
+             u.bio, u.is_featured,
+             p.doctor_name, p.clinic_name, p.address, p.timings, p.phone,
+             EXISTS (
+               SELECT 1 FROM clinics c2, jsonb_array_elements(c2.schedule) d
+               WHERE (c2.owner_id = u.id OR c2.id = u.clinic_id)
+                 AND (d->>'open')::boolean
+             ) AS has_schedule
+      FROM users u
+      LEFT JOIN pad_settings p ON p.user_id = u.id
+      WHERE u.public_profile_enabled = true
+        AND u.approval_status = 'approved'
+        AND u.profile_slug IS NOT NULL
+        AND u.show_in_directory IS NOT false
+        AND (${state ?? null}::text IS NULL OR LOWER(u.state) = LOWER(${state ?? ''}))
+        AND (${city ?? null}::text IS NULL OR LOWER(u.city) = LOWER(${city ?? ''}))
+        AND (${specialty ?? null}::text IS NULL OR LOWER(u.specialty) ILIKE ${specialty ? `%${specialty}%` : ''})
+        AND (${search ?? null}::text IS NULL
+             OR LOWER(u.name) ILIKE ${search ? `%${search}%` : ''}
+             OR LOWER(u.specialty) ILIKE ${search ? `%${search}%` : ''}
+             OR LOWER(u.city) ILIKE ${search ? `%${search}%` : ''}
+             OR LOWER(p.clinic_name) ILIKE ${search ? `%${search}%` : ''})
+      ORDER BY
+        CASE WHEN ${sortKey} = 'experience' THEN u.years_experience END DESC NULLS LAST,
+        CASE WHEN ${sortKey} = 'newest'     THEN u.created_at END DESC,
+        CASE WHEN ${sortKey} = 'name'       THEN LOWER(u.name) END ASC NULLS LAST,
+        (u.accepting_patients IS NOT FALSE AND EXISTS (
+           SELECT 1 FROM clinics c2, jsonb_array_elements(c2.schedule) d
+           WHERE (c2.owner_id = u.id OR c2.id = u.clinic_id)
+             AND (d->>'open')::boolean
+         )) DESC,
+        u.is_featured DESC NULLS LAST,
+        (u.profile_photo_url IS NOT NULL AND u.profile_photo_url != '') DESC,
+        u.created_at DESC
+      LIMIT ${Number(limit)} OFFSET ${Number(offset)}
+    `;
+        const total = await (0, db_1.default) `
+      SELECT COUNT(*) AS n FROM users u
+      LEFT JOIN pad_settings p ON p.user_id = u.id
+      WHERE u.public_profile_enabled = true
+        AND u.approval_status = 'approved'
+        AND u.profile_slug IS NOT NULL
+        AND u.show_in_directory IS NOT false
+    `;
+        // Fetch distinct states + cities for filter UI
+        const states = await (0, db_1.default) `
+      SELECT DISTINCT state FROM users
+      WHERE public_profile_enabled = true AND approval_status = 'approved'
+        AND profile_slug IS NOT NULL AND state IS NOT NULL AND state != ''
+      ORDER BY state
+    `;
+        const cities = await (0, db_1.default) `
+      SELECT DISTINCT city FROM users
+      WHERE public_profile_enabled = true AND approval_status = 'approved'
+        AND profile_slug IS NOT NULL AND city IS NOT NULL AND city != ''
+        AND (${state ?? null}::text IS NULL OR LOWER(state) = LOWER(${state ?? ''}))
+      ORDER BY city
+    `;
+        const specialties = await (0, db_1.default) `
+      SELECT DISTINCT specialty FROM users
+      WHERE public_profile_enabled = true AND approval_status = 'approved'
+        AND profile_slug IS NOT NULL AND specialty IS NOT NULL AND specialty != ''
+      ORDER BY specialty
+    `;
+        res.json({
+            doctors: rows.map(r => ({
+                id: r.id,
+                name: r.doctor_name || r.name,
+                specialty: r.specialty || '',
+                qualification: r.degrees || '',
+                profileSlug: r.profile_slug,
+                profilePhotoUrl: r.profile_photo_url || '',
+                yearsExperience: r.years_experience || 0,
+                consultationFee: r.consultation_fee || null,
+                acceptingPatients: r.accepting_patients !== false,
+                // True only when the doctor has at least one clinic with an open weekly schedule
+                bookingOpen: r.accepting_patients !== false && r.has_schedule === true,
+                city: r.city || '',
+                state: r.state || '',
+                clinicName: r.clinic_name || '',
+                clinicAddress: r.address || '',
+                clinicPhone: r.phone || '',
+                timings: r.timings || '',
+                bio: r.bio?.slice(0, 120) || '',
+            })),
+            total: Number(total[0]?.n ?? 0),
+            filters: {
+                states: states.map(r => r.state),
+                cities: cities.map(r => r.city),
+                specialties: specialties.map(r => r.specialty),
+            },
+        });
+    }
+    catch (e) {
+        res.status(500).json({ error: e.message });
+    }
+});
+// ─── GET /public/sitemap.xml — all public doctor profiles for search engines ─
+const APP_ORIGIN = 'https://app.vyasaa.com';
+router.get('/sitemap.xml', async (_req, res) => {
+    try {
+        const rows = await (0, db_1.default) `
+      SELECT profile_slug, updated_at FROM users
+      WHERE public_profile_enabled = true
+        AND approval_status = 'approved'
+        AND show_in_directory IS NOT false
+        AND profile_slug IS NOT NULL AND profile_slug != ''
+      ORDER BY is_featured DESC NULLS LAST, created_at DESC
+    `;
+        const today = new Date().toISOString().slice(0, 10);
+        const staticUrls = [
+            `  <url>\n    <loc>${APP_ORIGIN}/doctors</loc>\n    <changefreq>daily</changefreq>\n    <priority>0.9</priority>\n    <lastmod>${today}</lastmod>\n  </url>`,
+        ];
+        const doctorUrls = rows.map(r => {
+            const lastmod = r.updated_at ? new Date(r.updated_at).toISOString().slice(0, 10) : today;
+            return `  <url>\n    <loc>${APP_ORIGIN}/dr/${encodeURIComponent(r.profile_slug)}</loc>\n    <changefreq>weekly</changefreq>\n    <priority>0.8</priority>\n    <lastmod>${lastmod}</lastmod>\n  </url>`;
+        });
+        const xml = `<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n${[...staticUrls, ...doctorUrls].join('\n')}\n</urlset>\n`;
+        res.set('Content-Type', 'application/xml; charset=utf-8');
+        res.set('Cache-Control', 'public, max-age=3600');
+        res.send(xml);
+    }
+    catch (e) {
+        res.status(500).json({ error: e.message });
+    }
+});
+// ─── POST /public/partner-applications — lab and pharmacy interest forms ───
+// This intentionally writes to a separate queue so it cannot affect existing
+// doctor approvals, bookings, or clinical workflows.
+router.post('/partner-applications', async (req, res) => {
+    try {
+        const partnerType = String(req.body?.partnerType ?? '').trim().toLowerCase();
+        const organisation = String(req.body?.organisation ?? '').trim();
+        const contactName = String(req.body?.contactName ?? '').trim();
+        const email = String(req.body?.email ?? '').trim().toLowerCase();
+        const phone = String(req.body?.phone ?? '').trim();
+        const location = String(req.body?.location ?? '').trim();
+        const note = String(req.body?.note ?? '').trim();
+        if (!['lab', 'pharmacy'].includes(partnerType)) {
+            res.status(400).json({ error: 'Choose either a laboratory or pharmacy application.' });
+            return;
+        }
+        if (!organisation || organisation.length > 160 || !contactName || contactName.length > 120 ||
+            !location || location.length > 160 || note.length > 3000) {
+            res.status(400).json({ error: 'Please complete the required fields with valid details.' });
+            return;
+        }
+        if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || email.length > 254) {
+            res.status(400).json({ error: 'Please enter a valid work email.' });
+            return;
+        }
+        if (!/^[+()\-\s0-9]{7,24}$/.test(phone)) {
+            res.status(400).json({ error: 'Please enter a valid phone number.' });
+            return;
+        }
+        const [application] = await (0, db_1.default) `
+      INSERT INTO partner_applications (partner_type, organisation, contact_name, email, phone, location, note)
+      VALUES (${partnerType}, ${organisation}, ${contactName}, ${email}, ${phone}, ${location}, ${note})
+      RETURNING id, status, created_at
+    `;
+        const notification = (0, mailer_1.partnerApplicationNotification)({ partnerType, organisation, contactName, email, phone, location, note });
+        const primaryRecipient = process.env.PARTNER_APPLICATION_NOTIFICATION_EMAIL ?? 'support@vyasaa.com';
+        const cc = primaryRecipient.toLowerCase() === 'kaartkaroo@gmail.com'
+            ? []
+            : ['kaartkaroo@gmail.com'];
+        (0, mailer_1.sendMail)(primaryRecipient, notification.subject, notification.html, cc);
+        res.status(201).json(application);
+    }
+    catch (e) {
+        console.error('[public/partner-applications]', e);
+        res.status(500).json({ error: 'Unable to submit your interest right now. Please try again.' });
+    }
+});
+// ─── GET /public/doctors/search?q= — lightweight doctor search for referrals ─
+router.get('/doctors/search', async (req, res) => {
+    const q = (req.query.q ?? '').trim();
+    if (q.length < 2) {
+        res.json([]);
+        return;
+    }
+    const pattern = `%${q}%`;
+    try {
+        const rows = await (0, db_1.default) `
+      SELECT id, name, specialty, degrees, profile_photo_url, city, state, profile_slug
+      FROM users
+      WHERE approval_status = 'approved'
+        AND public_profile_enabled = true
+        AND profile_slug IS NOT NULL
+        AND (LOWER(name) ILIKE ${pattern} OR LOWER(specialty) ILIKE ${pattern})
+      ORDER BY is_featured DESC NULLS LAST, name ASC
+      LIMIT 20
+    `;
+        res.json(rows.map(r => ({
+            id: r.id,
+            name: r.name,
+            specialty: r.specialty || '',
+            qualification: r.degrees || '',
+            profilePhotoUrl: r.profile_photo_url || '',
+            city: r.city || '',
+            state: r.state || '',
+            profileSlug: r.profile_slug,
+        })));
+    }
+    catch (e) {
+        res.status(500).json({ error: e.message });
+    }
+});
+exports.default = router;

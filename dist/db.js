@@ -1,0 +1,799 @@
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.runMigrations = runMigrations;
+const serverless_1 = require("@neondatabase/serverless");
+require("dotenv/config");
+const sql = (0, serverless_1.neon)(process.env.DATABASE_URL);
+exports.default = sql;
+// ─── Schema migration (run once on startup) ───────────────────────────────────
+async function runMigrations() {
+    await sql `
+    CREATE TABLE IF NOT EXISTS users (
+      id SERIAL PRIMARY KEY,
+      name TEXT NOT NULL,
+      email TEXT UNIQUE NOT NULL,
+      password_hash TEXT DEFAULT '',
+      role TEXT NOT NULL DEFAULT 'clinic_admin',
+      specialty TEXT,
+      degrees TEXT,
+      phone TEXT,
+      reg_number TEXT,
+      license_number TEXT,
+      clinic_id TEXT,
+      approval_status TEXT NOT NULL DEFAULT 'pending',
+      rejection_reason TEXT,
+      google_id TEXT,
+      created_at TIMESTAMPTZ DEFAULT NOW()
+    )
+  `;
+    await sql `
+    CREATE TABLE IF NOT EXISTS clinics (
+      id TEXT PRIMARY KEY,
+      owner_id INTEGER REFERENCES users(id),
+      name TEXT NOT NULL,
+      address TEXT DEFAULT '',
+      phone TEXT DEFAULT '',
+      fee NUMERIC DEFAULT 200,
+      max_patients INTEGER DEFAULT 30,
+      timings TEXT DEFAULT '',
+      schedule JSONB DEFAULT '[]',
+      color TEXT DEFAULT '#0d9488',
+      created_at TIMESTAMPTZ DEFAULT NOW()
+    )
+  `;
+    await sql `
+    CREATE TABLE IF NOT EXISTS pad_settings (
+      user_id INTEGER REFERENCES users(id) ON DELETE CASCADE PRIMARY KEY,
+      doctor_name TEXT DEFAULT '',
+      degrees TEXT DEFAULT '',
+      specialty TEXT DEFAULT '',
+      reg_number TEXT DEFAULT '',
+      address TEXT DEFAULT '',
+      phone TEXT DEFAULT '',
+      email TEXT DEFAULT '',
+      timings TEXT DEFAULT '',
+      clinic_name TEXT DEFAULT '',
+      footer_note TEXT DEFAULT '',
+      quote TEXT DEFAULT '',
+      show_quote BOOLEAN DEFAULT false,
+      show_timings BOOLEAN DEFAULT true,
+      theme TEXT DEFAULT 'teal',
+      custom_fields JSONB DEFAULT '[]',
+      updated_at TIMESTAMPTZ DEFAULT NOW()
+    )
+  `;
+    await sql `
+    CREATE TABLE IF NOT EXISTS patients (
+      id TEXT PRIMARY KEY,
+      clinic_id TEXT NOT NULL,
+      name TEXT NOT NULL,
+      age INTEGER,
+      gender TEXT DEFAULT 'M',
+      mrn TEXT,
+      phone TEXT,
+      email TEXT,
+      blood_group TEXT,
+      status TEXT DEFAULT 'OPD',
+      priority TEXT DEFAULT 'Stable',
+      ward TEXT,
+      bed TEXT,
+      admit_date TEXT,
+      discharge_date TEXT,
+      diagnosis TEXT,
+      allergies JSONB DEFAULT '[]',
+      insurance TEXT,
+      attending_doctor TEXT,
+      attending_doctor_id INTEGER,
+      assigned_nurse_id INTEGER,
+      assigned_nurse_name TEXT,
+      death_date TEXT,
+      death_cause TEXT,
+      referred_hospital TEXT,
+      referred_dept TEXT,
+      referred_doctor TEXT,
+      referral_reason TEXT,
+      referral_urgency TEXT,
+      created_at TIMESTAMPTZ DEFAULT NOW(),
+      updated_at TIMESTAMPTZ DEFAULT NOW()
+    )
+  `;
+    await sql `
+    CREATE TABLE IF NOT EXISTS visits (
+      id TEXT PRIMARY KEY,
+      patient_id TEXT NOT NULL,
+      clinic_id TEXT NOT NULL,
+      date TEXT NOT NULL,
+      doctor_name TEXT NOT NULL,
+      doctor_id INTEGER,
+      data JSONB NOT NULL DEFAULT '{}',
+      created_at TIMESTAMPTZ DEFAULT NOW()
+    )
+  `;
+    await sql `
+    CREATE TABLE IF NOT EXISTS vitals (
+      id TEXT PRIMARY KEY,
+      patient_id TEXT NOT NULL,
+      clinic_id TEXT NOT NULL,
+      time TEXT NOT NULL,
+      recorded_by TEXT DEFAULT '',
+      bp TEXT,
+      pulse NUMERIC,
+      temp NUMERIC,
+      spo2 NUMERIC,
+      rr NUMERIC,
+      weight NUMERIC,
+      height NUMERIC,
+      gcs NUMERIC,
+      sugar NUMERIC,
+      notes TEXT,
+      alert BOOLEAN DEFAULT false
+    )
+  `;
+    await sql `
+    CREATE TABLE IF NOT EXISTS appointments (
+      id TEXT PRIMARY KEY,
+      clinic_id TEXT NOT NULL,
+      patient_id TEXT,
+      patient_name TEXT NOT NULL,
+      patient_age INTEGER,
+      doctor_id INTEGER,
+      doctor_name TEXT,
+      date TEXT NOT NULL,
+      time TEXT NOT NULL,
+      reason TEXT DEFAULT '',
+      status TEXT DEFAULT 'scheduled',
+      notes TEXT,
+      consultation_fee NUMERIC DEFAULT 0,
+      amount_paid NUMERIC DEFAULT 0,
+      payment_mode TEXT,
+      token INTEGER,
+      created_at TIMESTAMPTZ DEFAULT NOW()
+    )
+  `;
+    await sql `
+    CREATE TABLE IF NOT EXISTS chat_messages (
+      id TEXT PRIMARY KEY,
+      patient_id TEXT,
+      clinic_id TEXT NOT NULL,
+      sender_id INTEGER,
+      sender_name TEXT NOT NULL,
+      sender_role TEXT DEFAULT 'doctor',
+      message TEXT NOT NULL,
+      type TEXT DEFAULT 'message',
+      time TIMESTAMPTZ DEFAULT NOW()
+    )
+  `;
+    await sql `
+    CREATE TABLE IF NOT EXISTS refresh_tokens (
+      id SERIAL PRIMARY KEY,
+      user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+      token TEXT UNIQUE NOT NULL,
+      expires_at TIMESTAMPTZ NOT NULL,
+      created_at TIMESTAMPTZ DEFAULT NOW()
+    )
+  `;
+    // Indexes for common queries
+    await sql `CREATE INDEX IF NOT EXISTS idx_patients_clinic ON patients(clinic_id)`;
+    await sql `CREATE INDEX IF NOT EXISTS idx_visits_patient ON visits(patient_id)`;
+    await sql `CREATE INDEX IF NOT EXISTS idx_vitals_patient ON vitals(patient_id)`;
+    await sql `CREATE INDEX IF NOT EXISTS idx_appointments_clinic_date ON appointments(clinic_id, date)`;
+    await sql `CREATE INDEX IF NOT EXISTS idx_chat_clinic ON chat_messages(clinic_id)`;
+    // Column additions for existing tables
+    await sql `ALTER TABLE users ADD COLUMN IF NOT EXISTS reg_state TEXT`;
+    await sql `ALTER TABLE users ADD COLUMN IF NOT EXISTS state TEXT`;
+    await sql `ALTER TABLE users ADD COLUMN IF NOT EXISTS city TEXT`;
+    // Login session audit log
+    await sql `
+    CREATE TABLE IF NOT EXISTS login_sessions (
+      id SERIAL PRIMARY KEY,
+      user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+      user_name TEXT,
+      user_email TEXT,
+      user_role TEXT,
+      logged_in_at TIMESTAMPTZ DEFAULT NOW(),
+      ip_address TEXT,
+      user_agent TEXT,
+      lat DOUBLE PRECISION,
+      lng DOUBLE PRECISION,
+      location_label TEXT
+    )
+  `;
+    await sql `CREATE INDEX IF NOT EXISTS idx_login_sessions_user ON login_sessions(user_id)`;
+    await sql `CREATE INDEX IF NOT EXISTS idx_login_sessions_time ON login_sessions(logged_in_at DESC)`;
+    // Store which doctor's clinic(s) a staff member was invited to
+    await sql `ALTER TABLE users ADD COLUMN IF NOT EXISTS invited_clinic_ids TEXT`;
+    // Store invited clinic display name(s) for reference
+    await sql `ALTER TABLE users ADD COLUMN IF NOT EXISTS invited_clinic_name TEXT`;
+    // Store the user ID of the doctor who generated the invite link — primary match key
+    await sql `ALTER TABLE users ADD COLUMN IF NOT EXISTS invited_by_user_id INTEGER REFERENCES users(id)`;
+    // Backfill: repair clinic_id pointer when the referenced clinic no longer exists
+    // but the doctor still has OTHER clinics — just point to the first remaining one.
+    // We do NOT recreate a deleted clinic; if the doctor intentionally deleted it,
+    // the delete route already updated clinic_id to null or another clinic.
+    const orphanDoctors = await sql `
+    SELECT u.id, u.name, u.clinic_id
+    FROM users u
+    LEFT JOIN clinics c ON c.id = u.clinic_id
+    WHERE u.role = 'clinic_admin'
+      AND u.clinic_id IS NOT NULL
+      AND c.id IS NULL
+  `;
+    for (const doc of orphanDoctors) {
+        // Check if they have any other clinic we can point to
+        const [existing] = await sql `SELECT id FROM clinics WHERE owner_id = ${doc.id} LIMIT 1`;
+        if (existing) {
+            // Just fix the pointer — don't recreate a deleted clinic
+            await sql `UPDATE users SET clinic_id = ${existing.id} WHERE id = ${doc.id}`;
+        }
+        // If no clinics at all, leave clinic_id as-is (will be handled by the next backfill below)
+    }
+    // Backfill: assign a clinic_id to clinic_admin users who have none at all
+    const noClinics = await sql `
+    SELECT id, name FROM users WHERE role = 'clinic_admin' AND clinic_id IS NULL
+  `;
+    for (const doc of noClinics) {
+        const clinicId = `clinic_${doc.id}`;
+        await sql `
+      INSERT INTO clinics (id, owner_id, name, address, fee, max_patients)
+      VALUES (${clinicId}, ${doc.id}, ${doc.name + "'s Clinic"}, '', 200, 30)
+      ON CONFLICT DO NOTHING
+    `;
+        await sql `UPDATE users SET clinic_id = ${clinicId} WHERE id = ${doc.id}`;
+        await sql `
+      INSERT INTO pad_settings (user_id, doctor_name, clinic_name)
+      VALUES (${doc.id}, ${doc.name}, ${doc.name + "'s Clinic"})
+      ON CONFLICT (user_id) DO NOTHING
+    `;
+    }
+    // Locality field for patients (area/neighbourhood)
+    await sql `ALTER TABLE patients ADD COLUMN IF NOT EXISTS locality TEXT`;
+    // Clinic location fields — patients pick a chamber by location when booking
+    await sql `ALTER TABLE clinics ADD COLUMN IF NOT EXISTS state TEXT DEFAULT ''`;
+    await sql `ALTER TABLE clinics ADD COLUMN IF NOT EXISTS city TEXT DEFAULT ''`;
+    await sql `ALTER TABLE clinics ADD COLUMN IF NOT EXISTS pincode TEXT DEFAULT ''`;
+    await sql `ALTER TABLE clinics ADD COLUMN IF NOT EXISTS lat DOUBLE PRECISION`;
+    await sql `ALTER TABLE clinics ADD COLUMN IF NOT EXISTS lng DOUBLE PRECISION`;
+    // Beds config per clinic (JSONB array of { id, number, ward, type })
+    await sql `ALTER TABLE clinics ADD COLUMN IF NOT EXISTS beds JSONB DEFAULT '[]'`;
+    // Audit log — every action by every user
+    await sql `
+    CREATE TABLE IF NOT EXISTS audit_log (
+      id BIGSERIAL PRIMARY KEY,
+      actor_id INTEGER,
+      actor_name TEXT,
+      actor_role TEXT,
+      clinic_id TEXT,
+      action TEXT NOT NULL,
+      resource_type TEXT NOT NULL,
+      resource_id TEXT,
+      details JSONB,
+      ip_address TEXT,
+      user_agent TEXT,
+      created_at TIMESTAMPTZ DEFAULT NOW()
+    )
+  `;
+    await sql `CREATE INDEX IF NOT EXISTS idx_audit_actor ON audit_log(actor_id)`;
+    await sql `CREATE INDEX IF NOT EXISTS idx_audit_clinic ON audit_log(clinic_id)`;
+    await sql `CREATE INDEX IF NOT EXISTS idx_audit_time ON audit_log(created_at DESC)`;
+    await sql `CREATE INDEX IF NOT EXISTS idx_audit_resource ON audit_log(resource_type, resource_id)`;
+    // ── Public Profile fields on users ────────────────────────────────────────
+    await sql `ALTER TABLE users ADD COLUMN IF NOT EXISTS profile_slug TEXT UNIQUE`;
+    await sql `ALTER TABLE users ADD COLUMN IF NOT EXISTS bio TEXT DEFAULT ''`;
+    await sql `ALTER TABLE users ADD COLUMN IF NOT EXISTS languages TEXT DEFAULT ''`;
+    await sql `ALTER TABLE users ADD COLUMN IF NOT EXISTS accepting_patients BOOLEAN DEFAULT true`;
+    await sql `ALTER TABLE users ADD COLUMN IF NOT EXISTS public_profile_enabled BOOLEAN DEFAULT true`;
+    await sql `ALTER TABLE users ADD COLUMN IF NOT EXISTS gbp_url TEXT DEFAULT ''`;
+    await sql `ALTER TABLE users ADD COLUMN IF NOT EXISTS years_experience INTEGER DEFAULT 0`;
+    await sql `ALTER TABLE users ADD COLUMN IF NOT EXISTS consultation_fee INTEGER`;
+    await sql `ALTER TABLE clinics ADD COLUMN IF NOT EXISTS public_enabled BOOLEAN DEFAULT true`;
+    // Auto-generate profile_slug for clinic_admin users who don't have one
+    const noSlug = await sql `SELECT id, name FROM users WHERE role = 'clinic_admin' AND profile_slug IS NULL`;
+    for (const u of noSlug) {
+        const base = u.name.toLowerCase().replace(/^dr\.?\s+/i, '').replace(/[^a-z0-9\s]/g, '').trim().replace(/\s+/g, '-').slice(0, 80);
+        let slug = base, n = 2;
+        while (true) {
+            const existing = await sql `SELECT id FROM users WHERE profile_slug = ${slug}`;
+            if (!existing.length)
+                break;
+            slug = `${base}-${n++}`;
+        }
+        await sql `UPDATE users SET profile_slug = ${slug} WHERE id = ${u.id}`;
+    }
+    // ── Booking requests table ─────────────────────────────────────────────────
+    await sql `
+    CREATE TABLE IF NOT EXISTS booking_requests (
+      id BIGSERIAL PRIMARY KEY,
+      doctor_id INTEGER NOT NULL REFERENCES users(id),
+      clinic_id TEXT,
+      patient_name TEXT NOT NULL,
+      patient_phone TEXT NOT NULL,
+      patient_age INTEGER,
+      reason TEXT DEFAULT '',
+      preferred_date TEXT,
+      preferred_time TEXT,
+      status TEXT DEFAULT 'pending',
+      notes TEXT DEFAULT '',
+      created_at TIMESTAMPTZ DEFAULT NOW(),
+      confirmed_at TIMESTAMPTZ,
+      confirmed_by INTEGER
+    )
+  `;
+    await sql `CREATE INDEX IF NOT EXISTS idx_booking_requests_doctor ON booking_requests(doctor_id)`;
+    await sql `CREATE INDEX IF NOT EXISTS idx_booking_requests_status ON booking_requests(doctor_id, status)`;
+    // Doctor public profile photo
+    await sql `ALTER TABLE users ADD COLUMN IF NOT EXISTS profile_photo_url TEXT`;
+    // Patient email on bookings (for confirmation emails)
+    await sql `ALTER TABLE booking_requests ADD COLUMN IF NOT EXISTS patient_email TEXT DEFAULT ''`;
+    // Patient gender on bookings (for prescription auto-fill)
+    await sql `ALTER TABLE booking_requests ADD COLUMN IF NOT EXISTS patient_gender TEXT DEFAULT 'M'`;
+    await sql `ALTER TABLE appointments ADD COLUMN IF NOT EXISTS patient_gender TEXT DEFAULT 'M'`;
+    // Advance payment settings + payment QR (UPI) for doctors
+    await sql `ALTER TABLE users ADD COLUMN IF NOT EXISTS advance_payment BOOLEAN DEFAULT false`;
+    await sql `ALTER TABLE users ADD COLUMN IF NOT EXISTS advance_amount INTEGER`;
+    await sql `ALTER TABLE users ADD COLUMN IF NOT EXISTS payment_qr_url TEXT`;
+    // Privacy: show registration/NMC number on public profile (default shown)
+    await sql `ALTER TABLE users ADD COLUMN IF NOT EXISTS show_reg_number BOOLEAN DEFAULT true`;
+    // Doctor social-presence fields: education history, services offered, awards
+    await sql `ALTER TABLE users ADD COLUMN IF NOT EXISTS education TEXT DEFAULT ''`;
+    await sql `ALTER TABLE users ADD COLUMN IF NOT EXISTS services TEXT DEFAULT ''`;
+    await sql `ALTER TABLE users ADD COLUMN IF NOT EXISTS awards TEXT DEFAULT ''`;
+    // Approval/Rejection timestamps
+    await sql `ALTER TABLE users ADD COLUMN IF NOT EXISTS approved_at TIMESTAMPTZ`;
+    await sql `ALTER TABLE users ADD COLUMN IF NOT EXISTS rejected_at TIMESTAMPTZ`;
+    // Backfill reg_number from license_number for users who registered via the MCI/CI field
+    await sql `
+    UPDATE users SET reg_number = license_number
+    WHERE license_number IS NOT NULL AND license_number != ''
+      AND (reg_number IS NULL OR reg_number = '')
+  `;
+    await sql `
+    UPDATE pad_settings ps SET reg_number = u.license_number
+    FROM users u WHERE u.id = ps.user_id
+      AND u.license_number IS NOT NULL AND u.license_number != ''
+      AND (ps.reg_number IS NULL OR ps.reg_number = '')
+  `;
+    // User profile fields missing from original schema
+    await sql `ALTER TABLE users ADD COLUMN IF NOT EXISTS clinic_name TEXT DEFAULT ''`;
+    await sql `ALTER TABLE users ADD COLUMN IF NOT EXISTS department TEXT DEFAULT ''`;
+    // ── Backfill: create appointments for all existing confirmed booking_requests ─
+    // Only creates rows where no appointment with id 'BOOK-{id}-...' already exists
+    const confirmedBookings = await sql `
+    SELECT br.*, cl.id AS fallback_clinic_id
+    FROM booking_requests br
+    LEFT JOIN clinics cl ON cl.owner_id = br.doctor_id
+    WHERE br.status = 'confirmed' AND br.preferred_date IS NOT NULL
+  `;
+    for (const b of confirmedBookings) {
+        const aptId = `BOOK-${b.id}`;
+        const existing = await sql `SELECT id FROM appointments WHERE id LIKE ${aptId + '%'} LIMIT 1`;
+        if (existing.length > 0)
+            continue;
+        const clinicId = b.clinic_id ?? b.fallback_clinic_id;
+        if (!clinicId)
+            continue;
+        await sql `
+      INSERT INTO appointments
+        (id, clinic_id, patient_id, patient_name, patient_age, doctor_id, date, time, reason, status)
+      VALUES
+        (${aptId}, ${clinicId}, NULL, ${b.patient_name},
+         ${b.patient_age ? Number(b.patient_age) : null}, ${b.doctor_id},
+         ${b.preferred_date}, ${b.preferred_time ?? '09:00'},
+         ${b.reason ?? 'OPD Appointment'}, 'scheduled')
+      ON CONFLICT DO NOTHING
+    `.catch((e) => console.error('[backfill booking→apt]', b.id, e.message));
+    }
+    // ── Backfill: recover invited_by_user_id for approved staff with orphaned clinic_id ──
+    // When a clinic is deleted, approved staff lose visibility because clinic_id no longer
+    // matches any active clinic. We infer the approving doctor from two sources:
+    //   1. The auto-generated clinic ID format "clinic_<userId>" (e.g. clinic_3 → user 3)
+    //   2. Matching invited_clinic_ids against existing clinics in the clinics table
+    // This runs on every startup but is idempotent (COALESCE never overwrites existing values).
+    const orphanedStaff = await sql `
+    SELECT id, clinic_id, invited_clinic_ids
+    FROM users
+    WHERE approval_status = 'approved'
+      AND role NOT IN ('clinic_admin', 'superadmin', 'patient')
+      AND invited_by_user_id IS NULL
+  `;
+    for (const s of orphanedStaff) {
+        const clinicIdStr = s.clinic_id ?? '';
+        const invitedIds = String(s.invited_clinic_ids || '').split(',').map(x => x.trim()).filter(Boolean);
+        const allIds = Array.from(new Set([...invitedIds, ...(clinicIdStr ? [clinicIdStr] : [])]));
+        let resolved = null;
+        // Try: auto-generated clinic IDs like "clinic_3" encode the owner's user_id
+        for (const cid of allIds) {
+            const match = /^clinic_(\d+)$/.exec(cid);
+            if (match) {
+                const uid = Number(match[1]);
+                const [doc] = await sql `SELECT id FROM users WHERE id = ${uid} AND role = 'clinic_admin'`;
+                if (doc) {
+                    resolved = uid;
+                    break;
+                }
+            }
+        }
+        // Try: match against currently existing clinics
+        if (!resolved && allIds.length > 0) {
+            const [byClinic] = await sql `SELECT owner_id FROM clinics WHERE id = ANY(${allIds}) LIMIT 1`;
+            if (byClinic)
+                resolved = byClinic.owner_id;
+        }
+        if (resolved) {
+            await sql `UPDATE users SET invited_by_user_id = ${resolved} WHERE id = ${s.id} AND invited_by_user_id IS NULL`;
+        }
+    }
+    // show_in_directory flag: superadmin can hide a doctor from /doctors listing
+    await sql `ALTER TABLE users ADD COLUMN IF NOT EXISTS show_in_directory BOOLEAN DEFAULT true`;
+    // is_featured flag for manually pinning polished profiles to the homepage
+    await sql `ALTER TABLE users ADD COLUMN IF NOT EXISTS is_featured BOOLEAN DEFAULT false`;
+    // Pin Nilanjan to the featured carousel (no filter on accepting_patients)
+    await sql `
+    UPDATE users SET is_featured = true
+    WHERE LOWER(name) LIKE '%nilanjan%'
+      AND public_profile_enabled = true
+  `;
+    // ── Drug Knowledge Base (crowdsourced) ───────────────────────────────────────
+    await sql `
+    CREATE TABLE IF NOT EXISTS drugs (
+      id BIGSERIAL PRIMARY KEY,
+      name TEXT NOT NULL,
+      generic_name TEXT DEFAULT '',
+      brand_names TEXT DEFAULT '',
+      form TEXT DEFAULT '',
+      category TEXT DEFAULT '',
+      default_dose TEXT DEFAULT '',
+      default_frequency TEXT DEFAULT '',
+      default_duration TEXT DEFAULT '',
+      default_instructions TEXT DEFAULT '',
+      common_for TEXT DEFAULT '',
+      added_by INTEGER,
+      created_at TIMESTAMPTZ DEFAULT NOW()
+    )
+  `;
+    await sql `CREATE INDEX IF NOT EXISTS idx_drugs_name ON drugs(name)`;
+    await sql `CREATE UNIQUE INDEX IF NOT EXISTS idx_drugs_name_unique ON drugs(LOWER(name))`;
+    // E-signature URL stored per doctor in pad_settings
+    await sql `ALTER TABLE pad_settings ADD COLUMN IF NOT EXISTS e_sign_url TEXT DEFAULT ''`;
+    // Show/hide toggle for email on the printed pad, matching show_quote/show_timings.
+    // Defaults true so doctors who already have an email filled in keep seeing it
+    // after this column is added — no behavior change for existing data.
+    await sql `ALTER TABLE pad_settings ADD COLUMN IF NOT EXISTS show_email BOOLEAN DEFAULT true`;
+    // ── Organizations (clinics / hospitals as entities) ───────────────────────
+    await sql `
+    CREATE TABLE IF NOT EXISTS organizations (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      type TEXT NOT NULL DEFAULT 'clinic',   -- 'clinic' | 'hospital'
+      address TEXT DEFAULT '',
+      city TEXT DEFAULT '',
+      state TEXT DEFAULT '',
+      phone TEXT DEFAULT '',
+      email TEXT DEFAULT '',
+      gstin TEXT DEFAULT '',
+      reg_number TEXT DEFAULT '',
+      owner_id INTEGER REFERENCES users(id),
+      logo_url TEXT DEFAULT '',
+      created_at TIMESTAMPTZ DEFAULT NOW()
+    )
+  `;
+    await sql `CREATE INDEX IF NOT EXISTS idx_org_owner ON organizations(owner_id)`;
+    // ── Org members: staff belonging to an organization ───────────────────────
+    await sql `
+    CREATE TABLE IF NOT EXISTS org_members (
+      id SERIAL PRIMARY KEY,
+      org_id TEXT NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+      user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      role TEXT NOT NULL,
+      department TEXT DEFAULT '',
+      joined_at TIMESTAMPTZ DEFAULT NOW(),
+      UNIQUE(org_id, user_id)
+    )
+  `;
+    await sql `CREATE INDEX IF NOT EXISTS idx_org_members_org ON org_members(org_id)`;
+    await sql `CREATE INDEX IF NOT EXISTS idx_org_members_user ON org_members(user_id)`;
+    // Link users to their organization.
+    // NOTE: No FK constraint — Neon HTTP pooler routes calls to different connections,
+    // so a FK on org_id causes "users_org_id_fkey" violations during org/register even
+    // when the org row is inserted first. App-level ordering guarantees integrity.
+    await sql `ALTER TABLE users ADD COLUMN IF NOT EXISTS org_id TEXT`;
+    // Drop the FK constraint if it exists from a previous migration run
+    await sql `
+    DO $$
+    BEGIN
+      IF EXISTS (
+        SELECT 1 FROM information_schema.table_constraints
+        WHERE constraint_name = 'users_org_id_fkey'
+          AND table_name = 'users'
+      ) THEN
+        ALTER TABLE users DROP CONSTRAINT users_org_id_fkey;
+      END IF;
+    END$$
+  `;
+    // ── Billing / Invoices ────────────────────────────────────────────────────
+    await sql `
+    CREATE TABLE IF NOT EXISTS bills (
+      id TEXT PRIMARY KEY,
+      org_id TEXT REFERENCES organizations(id),
+      clinic_id TEXT,
+      patient_id TEXT,
+      patient_name TEXT NOT NULL,
+      items JSONB NOT NULL DEFAULT '[]',
+      subtotal NUMERIC DEFAULT 0,
+      discount NUMERIC DEFAULT 0,
+      tax NUMERIC DEFAULT 0,
+      total NUMERIC DEFAULT 0,
+      status TEXT DEFAULT 'draft',   -- draft | pending | paid | partially-paid
+      payment_mode TEXT,
+      notes TEXT DEFAULT '',
+      created_by INTEGER REFERENCES users(id),
+      created_at TIMESTAMPTZ DEFAULT NOW(),
+      paid_at TIMESTAMPTZ
+    )
+  `;
+    await sql `CREATE INDEX IF NOT EXISTS idx_bills_org ON bills(org_id)`;
+    await sql `CREATE INDEX IF NOT EXISTS idx_bills_patient ON bills(patient_id)`;
+    await sql `CREATE INDEX IF NOT EXISTS idx_bills_status ON bills(org_id, status)`;
+    // Backfill: patients stored under deleted auto-generated clinic IDs (clinic_{userId})
+    // Re-point them to that doctor's current active clinic so simple clinic-based lookups work.
+    const orphanedPatients = await sql `
+    SELECT id, clinic_id FROM patients
+    WHERE clinic_id LIKE 'clinic_%'
+      AND clinic_id NOT IN (SELECT id FROM clinics)
+  `;
+    for (const p of orphanedPatients) {
+        const match = /^clinic_(\d+)$/.exec(p.clinic_id);
+        if (match) {
+            const doctorId = Number(match[1]);
+            const [activeClinic] = await sql `
+        SELECT id FROM clinics WHERE owner_id = ${doctorId} ORDER BY created_at LIMIT 1
+      `;
+            if (activeClinic) {
+                await sql `UPDATE patients SET clinic_id = ${activeClinic.id} WHERE clinic_id = ${p.clinic_id}`;
+                console.log(`[migration] Re-pointed patients from ${p.clinic_id} → ${activeClinic.id}`);
+            }
+        }
+    }
+    // Backfill: auto-enable show_reg_number for doctors who have a reg number saved.
+    // Default was false (hidden) but if a doctor entered their number, they expect it to show.
+    await sql `
+    UPDATE users SET show_reg_number = true
+    WHERE role = 'clinic_admin'
+      AND show_reg_number = false
+      AND (
+        (reg_number IS NOT NULL AND reg_number != '')
+        OR (license_number IS NOT NULL AND license_number != '')
+      )
+  `;
+    // consent_given_at: timestamp when user explicitly accepted Privacy Policy & Terms
+    await sql `ALTER TABLE users ADD COLUMN IF NOT EXISTS consent_given_at TIMESTAMPTZ`;
+    // medical_council: name of the council the doctor is registered with (NMC, CCIM, DCI, etc.)
+    await sql `ALTER TABLE users ADD COLUMN IF NOT EXISTS medical_council TEXT DEFAULT ''`;
+    // prescriptions: individual medication records per patient per date
+    await sql `
+    CREATE TABLE IF NOT EXISTS prescriptions (
+      id TEXT PRIMARY KEY,
+      patient_id TEXT NOT NULL,
+      visit_id TEXT,
+      clinic_id TEXT NOT NULL,
+      doctor_id INTEGER,
+      doctor_name TEXT,
+      drug TEXT NOT NULL,
+      dose TEXT,
+      route TEXT,
+      frequency TEXT,
+      duration TEXT,
+      instructions TEXT,
+      status TEXT NOT NULL DEFAULT 'active',
+      prescribed_at TEXT NOT NULL,
+      created_at TIMESTAMPTZ DEFAULT NOW()
+    )
+  `;
+    await sql `CREATE INDEX IF NOT EXISTS idx_rx_patient ON prescriptions(patient_id)`;
+    await sql `CREATE INDEX IF NOT EXISTS idx_rx_visit ON prescriptions(visit_id)`;
+    // lab_orders: investigations ordered per patient
+    await sql `
+    CREATE TABLE IF NOT EXISTS lab_orders (
+      id TEXT PRIMARY KEY,
+      patient_id TEXT NOT NULL,
+      clinic_id TEXT NOT NULL,
+      doctor_id INTEGER,
+      test_name TEXT NOT NULL,
+      panel TEXT,
+      ordered_by TEXT,
+      ordered_at TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'ordered',
+      urgency TEXT,
+      result TEXT,
+      unit TEXT,
+      ref_range TEXT,
+      critical BOOLEAN DEFAULT false,
+      result_time TEXT,
+      report_data_url TEXT,
+      created_at TIMESTAMPTZ DEFAULT NOW()
+    )
+  `;
+    await sql `CREATE INDEX IF NOT EXISTS idx_labs_patient ON lab_orders(patient_id)`;
+    await sql `CREATE INDEX IF NOT EXISTS idx_labs_clinic ON lab_orders(clinic_id)`;
+    // discharge_summaries: full structured discharge record for IPD patients
+    await sql `
+    CREATE TABLE IF NOT EXISTS discharge_summaries (
+      id TEXT PRIMARY KEY,
+      patient_id TEXT NOT NULL,
+      clinic_id TEXT NOT NULL,
+      doctor_id INTEGER,
+      admit_date TEXT,
+      discharge_date TEXT NOT NULL,
+      discharge_type TEXT NOT NULL,
+      final_diagnosis TEXT,
+      condition_at_discharge TEXT,
+      treatment_summary TEXT,
+      procedures_done TEXT,
+      instructions TEXT,
+      referred_to TEXT,
+      follow_up TEXT,
+      ward TEXT,
+      bed TEXT,
+      data JSONB DEFAULT '{}',
+      created_at TIMESTAMPTZ DEFAULT NOW()
+    )
+  `;
+    await sql `CREATE INDEX IF NOT EXISTS idx_discharge_patient ON discharge_summaries(patient_id)`;
+    // doctor_id on visits — added after initial table creation for solo-practice visit filtering
+    await sql `ALTER TABLE visits ADD COLUMN IF NOT EXISTS doctor_id INTEGER`;
+    await sql `
+    CREATE TABLE IF NOT EXISTS email_logs (
+      id SERIAL PRIMARY KEY,
+      sent_by INTEGER REFERENCES users(id),
+      recipient_id INTEGER,
+      recipient_email TEXT NOT NULL,
+      recipient_name TEXT NOT NULL,
+      template_name TEXT NOT NULL,
+      subject TEXT NOT NULL,
+      sent_at TIMESTAMPTZ DEFAULT NOW()
+    )
+  `;
+    await sql `CREATE INDEX IF NOT EXISTS idx_email_logs_recipient ON email_logs(recipient_id)`;
+    await sql `CREATE INDEX IF NOT EXISTS idx_email_logs_sent_at ON email_logs(sent_at DESC)`;
+    // Reusable custom email templates authored by superadmins (server-persisted so
+    // they survive across devices / browsers, unlike the old localStorage-only copy).
+    await sql `
+    CREATE TABLE IF NOT EXISTS email_templates (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      subject TEXT NOT NULL,
+      body TEXT NOT NULL,
+      created_by INTEGER REFERENCES users(id),
+      created_at TIMESTAMPTZ DEFAULT NOW(),
+      updated_at TIMESTAMPTZ DEFAULT NOW()
+    )
+  `;
+    // Per-doctor "which consult sections do I want always open" preference —
+    // server-persisted so it follows the doctor across devices/browsers, not
+    // just the device they set it on.
+    await sql `
+    CREATE TABLE IF NOT EXISTS user_consult_prefs (
+      user_id INTEGER PRIMARY KEY REFERENCES users(id),
+      pinned_sections JSONB DEFAULT '[]',
+      updated_at TIMESTAMPTZ DEFAULT NOW()
+    )
+  `;
+    await sql `
+    CREATE TABLE IF NOT EXISTS page_events (
+      id SERIAL PRIMARY KEY,
+      event_type TEXT NOT NULL,
+      metadata JSONB DEFAULT '{}',
+      ip_address TEXT,
+      user_agent TEXT,
+      created_at TIMESTAMPTZ DEFAULT NOW()
+    )
+  `;
+    await sql `CREATE INDEX IF NOT EXISTS idx_page_events_type_time ON page_events(event_type, created_at DESC)`;
+    // Product-analytics enrichment — tag every in-app event with who/where/which session.
+    // PHI is never stored here (no patient names/MRN/diagnosis) — only feature-usage metadata.
+    await sql `ALTER TABLE page_events ADD COLUMN IF NOT EXISTS user_id INTEGER`;
+    await sql `ALTER TABLE page_events ADD COLUMN IF NOT EXISTS user_name TEXT`;
+    await sql `ALTER TABLE page_events ADD COLUMN IF NOT EXISTS role TEXT`;
+    await sql `ALTER TABLE page_events ADD COLUMN IF NOT EXISTS clinic_id TEXT`;
+    await sql `ALTER TABLE page_events ADD COLUMN IF NOT EXISTS path TEXT`;
+    await sql `ALTER TABLE page_events ADD COLUMN IF NOT EXISTS session_id TEXT`;
+    await sql `CREATE INDEX IF NOT EXISTS idx_page_events_user ON page_events(user_id, created_at DESC)`;
+    await sql `CREATE INDEX IF NOT EXISTS idx_page_events_time ON page_events(created_at DESC)`;
+    await sql `CREATE INDEX IF NOT EXISTS idx_page_events_session ON page_events(session_id, created_at)`;
+    // User feedback — any logged-in user submits (rating + note + optional screenshot),
+    // shown by name in the SuperAdmin Feedback tab. Additive; not linked to any existing table.
+    await sql `
+    CREATE TABLE IF NOT EXISTS feedback (
+      id SERIAL PRIMARY KEY,
+      user_id INTEGER,
+      user_name TEXT,
+      user_role TEXT,
+      clinic_id TEXT,
+      rating INTEGER,
+      category TEXT,
+      message TEXT,
+      screenshot TEXT,
+      status TEXT DEFAULT 'open',
+      resolved_at TIMESTAMPTZ,
+      created_at TIMESTAMPTZ DEFAULT NOW()
+    )
+  `;
+    await sql `CREATE INDEX IF NOT EXISTS idx_feedback_status_time ON feedback(status, created_at DESC)`;
+    // Public lab and pharmacy partnership interest. This is intentionally
+    // separate from users, approvals, bookings, and feedback.
+    await sql `
+    CREATE TABLE IF NOT EXISTS partner_applications (
+      id SERIAL PRIMARY KEY,
+      partner_type TEXT NOT NULL CHECK (partner_type IN ('lab', 'pharmacy')),
+      organisation TEXT NOT NULL,
+      contact_name TEXT NOT NULL,
+      email TEXT NOT NULL,
+      phone TEXT NOT NULL,
+      location TEXT NOT NULL,
+      note TEXT DEFAULT '',
+      status TEXT NOT NULL DEFAULT 'new' CHECK (status IN ('new', 'reviewing', 'approved', 'rejected')),
+      reviewer_note TEXT DEFAULT '',
+      reviewed_by INTEGER REFERENCES users(id),
+      reviewed_at TIMESTAMPTZ,
+      created_at TIMESTAMPTZ DEFAULT NOW()
+    )
+  `;
+    await sql `CREATE INDEX IF NOT EXISTS idx_partner_applications_status_time ON partner_applications(status, created_at DESC)`;
+    // ── Role correction: org-registered users must be clinic_manager, not clinic_admin ──
+    // Old backend code inserted 'clinic_admin' for org/register users. Fix any that slipped through.
+    await sql `
+    UPDATE users SET role = 'clinic_manager'
+    WHERE org_id IS NOT NULL AND role = 'clinic_admin'
+  `;
+    // ── Video consultation support ─────────────────────────────────────────────
+    await sql `ALTER TABLE appointments ADD COLUMN IF NOT EXISTS consultation_type TEXT DEFAULT 'offline'`;
+    // 'offline' | 'video'
+    await sql `ALTER TABLE appointments ADD COLUMN IF NOT EXISTS google_meet_link TEXT DEFAULT ''`;
+    await sql `ALTER TABLE appointments ADD COLUMN IF NOT EXISTS google_calendar_event_id TEXT DEFAULT ''`;
+    await sql `ALTER TABLE appointments ADD COLUMN IF NOT EXISTS duration_mins INTEGER DEFAULT 30`;
+    // ── Doctor-to-doctor patient referrals ────────────────────────────────────
+    await sql `
+    CREATE TABLE IF NOT EXISTS referrals (
+      id BIGSERIAL PRIMARY KEY,
+      referring_doctor_id INTEGER NOT NULL REFERENCES users(id),
+      receiving_doctor_id INTEGER NOT NULL REFERENCES users(id),
+      patient_id TEXT,
+      patient_name TEXT NOT NULL,
+      patient_age INTEGER,
+      patient_gender TEXT DEFAULT 'M',
+      patient_phone TEXT DEFAULT '',
+      reason TEXT NOT NULL,
+      notes TEXT DEFAULT '',
+      clinical_info TEXT DEFAULT '',
+      urgency TEXT DEFAULT 'routine',  -- routine | urgent | emergency
+      status TEXT DEFAULT 'pending',   -- pending | accepted | declined | cancelled
+      declined_reason TEXT DEFAULT '',
+      created_at TIMESTAMPTZ DEFAULT NOW(),
+      accepted_at TIMESTAMPTZ,
+      declined_at TIMESTAMPTZ,
+      updated_at TIMESTAMPTZ DEFAULT NOW()
+    )
+  `;
+    await sql `CREATE INDEX IF NOT EXISTS idx_referrals_referring ON referrals(referring_doctor_id)`;
+    await sql `CREATE INDEX IF NOT EXISTS idx_referrals_receiving ON referrals(receiving_doctor_id)`;
+    await sql `CREATE INDEX IF NOT EXISTS idx_referrals_status ON referrals(receiving_doctor_id, status)`;
+    // ── In-app notifications ───────────────────────────────────────────────────
+    await sql `
+    CREATE TABLE IF NOT EXISTS notifications (
+      id BIGSERIAL PRIMARY KEY,
+      user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      type TEXT NOT NULL,              -- referral_received | referral_accepted | referral_declined | video_booking
+      title TEXT NOT NULL,
+      message TEXT NOT NULL,
+      entity_type TEXT DEFAULT '',     -- referral | appointment
+      entity_id TEXT DEFAULT '',
+      read BOOLEAN DEFAULT false,
+      created_at TIMESTAMPTZ DEFAULT NOW()
+    )
+  `;
+    await sql `CREATE INDEX IF NOT EXISTS idx_notifications_user ON notifications(user_id, read, created_at DESC)`;
+    console.log('✅ DB migrations complete');
+}
+// Run as standalone: npx tsx src/db.ts
+if (require.main === module) {
+    runMigrations().catch(console.error).finally(() => process.exit());
+}

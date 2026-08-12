@@ -2,7 +2,7 @@ services:
   - type: web
     name: vyasa-backend
     env: node
-    buildCommand: npm install --include=dev && npm run build
+    buildCommand: npm install --omit=dev
     startCommand: npm start
     plan: free
     envVars:

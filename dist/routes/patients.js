@@ -1,0 +1,195 @@
+"use strict";
+var __importDefault = (this && this.__importDefault) || function (mod) {
+    return (mod && mod.__esModule) ? mod : { "default": mod };
+};
+Object.defineProperty(exports, "__esModule", { value: true });
+const express_1 = require("express");
+const auth_1 = require("../middleware/auth");
+const db_1 = __importDefault(require("../db"));
+const crypto_1 = require("../lib/crypto");
+const audit_1 = require("../lib/audit");
+const router = (0, express_1.Router)();
+router.use(auth_1.requireAuth);
+function mapPatient(p) {
+    return {
+        id: p.id,
+        clinicId: p.clinic_id,
+        name: (0, crypto_1.maybeDecrypt)(p.name),
+        age: p.age,
+        gender: p.gender,
+        mrn: p.mrn,
+        phone: (0, crypto_1.maybeDecrypt)(p.phone),
+        email: p.email,
+        bloodGroup: p.blood_group,
+        status: p.status,
+        priority: p.priority,
+        ward: p.ward,
+        bed: p.bed,
+        admitDate: p.admit_date,
+        dischargeDate: p.discharge_date,
+        diagnosis: (0, crypto_1.maybeDecrypt)(p.diagnosis),
+        allergies: typeof p.allergies === 'string' ? JSON.parse(p.allergies) : (p.allergies ?? []),
+        insurance: p.insurance,
+        attendingDoctor: p.attending_doctor,
+        attendingDoctorId: p.attending_doctor_id,
+        assignedNurseId: p.assigned_nurse_id,
+        assignedNurseName: p.assigned_nurse_name,
+        deathDate: p.death_date,
+        deathCause: p.death_cause,
+        referredHospital: p.referred_hospital,
+        referredDept: p.referred_dept,
+        referredDoctor: p.referred_doctor,
+        referralReason: p.referral_reason,
+        referralUrgency: p.referral_urgency,
+        locality: p.locality,
+        createdAt: p.created_at,
+        updatedAt: p.updated_at,
+    };
+}
+// ─── List patients for clinic ─────────────────────────────────────────────────
+router.get('/', async (req, res) => {
+    const userId = req.user.userId;
+    const jwtClinicId = req.user.clinicId;
+    const rows = await (0, db_1.default) `
+    SELECT * FROM patients
+    WHERE clinic_id IN (SELECT id FROM clinics WHERE owner_id = ${userId})
+       OR clinic_id = ${jwtClinicId}
+    ORDER BY created_at DESC
+  `;
+    const patients = rows.map(mapPatient);
+    (0, audit_1.auditFromReq)(req, 'patient.read', 'patients', jwtClinicId, { count: patients.length });
+    res.json(patients);
+});
+// ─── Single patient ───────────────────────────────────────────────────────────
+router.get('/:id', async (req, res) => {
+    const userId = req.user.userId;
+    const jwtClinicId = req.user.clinicId;
+    const [p] = await (0, db_1.default) `
+    SELECT * FROM patients
+    WHERE id = ${req.params.id}
+      AND (
+        clinic_id IN (SELECT id FROM clinics WHERE owner_id = ${userId})
+        OR clinic_id = ${jwtClinicId}
+      )
+  `;
+    if (!p) {
+        res.status(404).json({ error: 'Patient not found' });
+        return;
+    }
+    (0, audit_1.auditFromReq)(req, 'patient.read', 'patient', req.params.id);
+    res.json(mapPatient(p));
+});
+// ─── Create / Upsert patient ──────────────────────────────────────────────────
+router.post('/', async (req, res) => {
+    const clinicId = req.user.clinicId;
+    const d = req.body;
+    // Minimal validation: id + name are NOT NULL in the schema; age must be numeric
+    if (typeof d.id !== 'string' || !d.id.trim() || typeof d.name !== 'string' || !d.name.trim()) {
+        res.status(400).json({ error: 'Patient id and name are required' });
+        return;
+    }
+    if (d.age != null && Number.isNaN(Number(d.age))) {
+        res.status(400).json({ error: 'Age must be a number' });
+        return;
+    }
+    const encName = (0, crypto_1.maybeEncrypt)(d.name);
+    const encPhone = (0, crypto_1.maybeEncrypt)(d.phone ?? null);
+    const encDiagnosis = (0, crypto_1.maybeEncrypt)(d.diagnosis ?? null);
+    const [patient] = await (0, db_1.default) `
+    INSERT INTO patients (
+      id, clinic_id, name, age, gender, mrn, phone, email, blood_group,
+      status, priority, ward, bed, admit_date, discharge_date, diagnosis, allergies,
+      insurance, attending_doctor, attending_doctor_id, assigned_nurse_id, assigned_nurse_name,
+      death_date, death_cause, referred_hospital, referred_dept, referred_doctor,
+      referral_reason, referral_urgency, locality
+    ) VALUES (
+      ${d.id}, ${clinicId}, ${encName}, ${d.age ?? null}, ${d.gender ?? 'M'}, ${d.mrn ?? null},
+      ${encPhone}, ${d.email ?? null}, ${d.bloodGroup ?? null},
+      ${d.status ?? 'OPD'}, ${d.priority ?? 'Stable'}, ${d.ward ?? null}, ${d.bed ?? null},
+      ${d.admitDate ?? null}, ${d.dischargeDate ?? null}, ${encDiagnosis},
+      ${JSON.stringify(d.allergies ?? [])},
+      ${d.insurance ?? null}, ${d.attendingDoctor ?? null}, ${d.attendingDoctorId ?? null},
+      ${d.assignedNurseId ?? null}, ${d.assignedNurseName ?? null},
+      ${d.deathDate ?? null}, ${d.deathCause ?? null}, ${d.referredHospital ?? null},
+      ${d.referredDept ?? null}, ${d.referredDoctor ?? null},
+      ${d.referralReason ?? null}, ${d.referralUrgency ?? null}, ${d.locality ?? null}
+    )
+    ON CONFLICT (id) DO UPDATE SET
+      name = EXCLUDED.name, age = EXCLUDED.age, gender = EXCLUDED.gender,
+      phone = EXCLUDED.phone, email = EXCLUDED.email, blood_group = EXCLUDED.blood_group,
+      status = EXCLUDED.status, priority = EXCLUDED.priority,
+      ward = EXCLUDED.ward, bed = EXCLUDED.bed, admit_date = EXCLUDED.admit_date,
+      discharge_date = EXCLUDED.discharge_date, diagnosis = EXCLUDED.diagnosis,
+      allergies = EXCLUDED.allergies, insurance = EXCLUDED.insurance,
+      attending_doctor = EXCLUDED.attending_doctor, attending_doctor_id = EXCLUDED.attending_doctor_id,
+      assigned_nurse_id = EXCLUDED.assigned_nurse_id, assigned_nurse_name = EXCLUDED.assigned_nurse_name,
+      death_date = EXCLUDED.death_date, death_cause = EXCLUDED.death_cause,
+      referred_hospital = EXCLUDED.referred_hospital, referred_dept = EXCLUDED.referred_dept,
+      referred_doctor = EXCLUDED.referred_doctor, referral_reason = EXCLUDED.referral_reason,
+      referral_urgency = EXCLUDED.referral_urgency, locality = EXCLUDED.locality, updated_at = NOW()
+    RETURNING *
+  `;
+    (0, audit_1.auditFromReq)(req, 'patient.create', 'patient', d.id, { mrn: d.mrn, status: d.status });
+    res.status(201).json(mapPatient(patient));
+});
+// ─── Update patient ───────────────────────────────────────────────────────────
+router.patch('/:id', async (req, res) => {
+    const d = req.body;
+    const encName = d.name != null ? (0, crypto_1.maybeEncrypt)(d.name) : null;
+    const encPhone = d.phone != null ? (0, crypto_1.maybeEncrypt)(d.phone) : null;
+    const encDiagnosis = d.diagnosis != null ? (0, crypto_1.maybeEncrypt)(d.diagnosis) : null;
+    const [patient] = await (0, db_1.default) `
+    UPDATE patients SET
+      name = COALESCE(${encName}, name),
+      age = COALESCE(${d.age ?? null}, age),
+      gender = COALESCE(${d.gender ?? null}, gender),
+      phone = COALESCE(${encPhone}, phone),
+      email = COALESCE(${d.email ?? null}, email),
+      blood_group = COALESCE(${d.bloodGroup ?? null}, blood_group),
+      status = COALESCE(${d.status ?? null}, status),
+      priority = COALESCE(${d.priority ?? null}, priority),
+      ward = COALESCE(${d.ward ?? null}, ward),
+      bed = COALESCE(${d.bed ?? null}, bed),
+      admit_date = COALESCE(${d.admitDate ?? null}, admit_date),
+      discharge_date = COALESCE(${d.dischargeDate ?? null}, discharge_date),
+      diagnosis = COALESCE(${encDiagnosis}, diagnosis),
+      allergies = COALESCE(${d.allergies ? JSON.stringify(d.allergies) : null}::jsonb, allergies),
+      insurance = COALESCE(${d.insurance ?? null}, insurance),
+      attending_doctor = COALESCE(${d.attendingDoctor ?? null}, attending_doctor),
+      assigned_nurse_id = COALESCE(${d.assignedNurseId ?? null}, assigned_nurse_id),
+      assigned_nurse_name = COALESCE(${d.assignedNurseName ?? null}, assigned_nurse_name),
+      death_date = COALESCE(${d.deathDate ?? null}, death_date),
+      death_cause = COALESCE(${d.deathCause ?? null}, death_cause),
+      referred_hospital = COALESCE(${d.referredHospital ?? null}, referred_hospital),
+      referred_dept = COALESCE(${d.referredDept ?? null}, referred_dept),
+      referred_doctor = COALESCE(${d.referredDoctor ?? null}, referred_doctor),
+      referral_reason = COALESCE(${d.referralReason ?? null}, referral_reason),
+      referral_urgency = COALESCE(${d.referralUrgency ?? null}, referral_urgency),
+      updated_at = NOW()
+    WHERE id = ${req.params.id} AND clinic_id = ${req.user.clinicId}
+    RETURNING *
+  `;
+    if (!patient) {
+        res.status(404).json({ error: 'Patient not found' });
+        return;
+    }
+    (0, audit_1.auditFromReq)(req, 'patient.update', 'patient', req.params.id, {
+        fields: Object.keys(d).filter(k => d[k] != null),
+    });
+    res.json(mapPatient(patient));
+});
+// ─── Delete patient ───────────────────────────────────────────────────────────
+router.delete('/:id', async (req, res) => {
+    const userId = req.user.userId;
+    const jwtClinicId = req.user.clinicId;
+    await (0, db_1.default) `
+    DELETE FROM patients WHERE id = ${req.params.id}
+      AND (
+        clinic_id IN (SELECT id FROM clinics WHERE owner_id = ${userId})
+        OR clinic_id = ${jwtClinicId}
+      )
+  `;
+    (0, audit_1.auditFromReq)(req, 'patient.delete', 'patient', req.params.id);
+    res.json({ ok: true });
+});
+exports.default = router;

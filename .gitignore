@@ -3,8 +3,8 @@
 .env.local
 .env.production
 
-# Build output
-dist/
+# Build output — committed so Render deploys without needing GitHub webhook
+# dist/
 
 # Dependencies
 node_modules/
