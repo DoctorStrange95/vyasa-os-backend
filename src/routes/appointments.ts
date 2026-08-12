@@ -60,6 +60,9 @@ router.get('/', async (req: Request, res: Response) => {
     paymentMode: r.payment_mode,
     token: r.token,
     createdAt: r.created_at,
+    consultationType: r.consultation_type ?? 'offline',
+    googleMeetLink: r.google_meet_link ?? '',
+    durationMins: r.duration_mins ?? 30,
   })));
 });
 
@@ -69,20 +72,28 @@ router.post('/', async (req: Request, res: Response) => {
   const userId = req.user!.userId;
 
   const [row] = await sql`
-    INSERT INTO appointments (id, clinic_id, patient_id, patient_name, patient_age, doctor_id, doctor_name,
-      date, time, reason, status, notes, consultation_fee, amount_paid, payment_mode, token)
+    INSERT INTO appointments (id, clinic_id, patient_id, patient_name, patient_age, patient_gender, doctor_id, doctor_name,
+      date, time, reason, status, notes, consultation_fee, amount_paid, payment_mode, token,
+      consultation_type, google_meet_link, google_calendar_event_id, duration_mins)
     VALUES (
       ${d.id}, ${clinicId}, ${d.patientId ?? null}, ${d.patientName}, ${d.patientAge ?? null},
+      ${d.patientGender ?? 'M'},
       ${userId}, ${d.doctorName ?? null},
       ${d.date}, ${d.time}, ${d.reason ?? ''}, ${d.status ?? 'scheduled'},
       ${d.notes ?? null}, ${d.consultationFee ?? 0}, ${d.amountPaid ?? 0},
-      ${d.paymentMode ?? null}, ${d.token ?? null}
+      ${d.paymentMode ?? null}, ${d.token ?? null},
+      ${d.consultationType ?? 'offline'},
+      ${d.googleMeetLink ?? ''},
+      ${d.googleCalendarEventId ?? ''},
+      ${d.durationMins ?? 30}
     )
     ON CONFLICT (id) DO UPDATE SET
       status = EXCLUDED.status, notes = EXCLUDED.notes,
       amount_paid = EXCLUDED.amount_paid, payment_mode = EXCLUDED.payment_mode,
       patient_id = EXCLUDED.patient_id, reason = EXCLUDED.reason,
-      consultation_fee = EXCLUDED.consultation_fee, token = EXCLUDED.token
+      consultation_fee = EXCLUDED.consultation_fee, token = EXCLUDED.token,
+      consultation_type = EXCLUDED.consultation_type,
+      google_meet_link = EXCLUDED.google_meet_link
     RETURNING *
   `;
   res.status(201).json(row);

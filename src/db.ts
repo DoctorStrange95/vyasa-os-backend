@@ -803,6 +803,56 @@ export async function runMigrations() {
     WHERE org_id IS NOT NULL AND role = 'clinic_admin'
   `;
 
+  // ── Video consultation support ─────────────────────────────────────────────
+  await sql`ALTER TABLE appointments ADD COLUMN IF NOT EXISTS consultation_type TEXT DEFAULT 'offline'`;
+  // 'offline' | 'video'
+  await sql`ALTER TABLE appointments ADD COLUMN IF NOT EXISTS google_meet_link TEXT DEFAULT ''`;
+  await sql`ALTER TABLE appointments ADD COLUMN IF NOT EXISTS google_calendar_event_id TEXT DEFAULT ''`;
+  await sql`ALTER TABLE appointments ADD COLUMN IF NOT EXISTS duration_mins INTEGER DEFAULT 30`;
+
+  // ── Doctor-to-doctor patient referrals ────────────────────────────────────
+  await sql`
+    CREATE TABLE IF NOT EXISTS referrals (
+      id BIGSERIAL PRIMARY KEY,
+      referring_doctor_id INTEGER NOT NULL REFERENCES users(id),
+      receiving_doctor_id INTEGER NOT NULL REFERENCES users(id),
+      patient_id TEXT,
+      patient_name TEXT NOT NULL,
+      patient_age INTEGER,
+      patient_gender TEXT DEFAULT 'M',
+      patient_phone TEXT DEFAULT '',
+      reason TEXT NOT NULL,
+      notes TEXT DEFAULT '',
+      clinical_info TEXT DEFAULT '',
+      urgency TEXT DEFAULT 'routine',  -- routine | urgent | emergency
+      status TEXT DEFAULT 'pending',   -- pending | accepted | declined | cancelled
+      declined_reason TEXT DEFAULT '',
+      created_at TIMESTAMPTZ DEFAULT NOW(),
+      accepted_at TIMESTAMPTZ,
+      declined_at TIMESTAMPTZ,
+      updated_at TIMESTAMPTZ DEFAULT NOW()
+    )
+  `;
+  await sql`CREATE INDEX IF NOT EXISTS idx_referrals_referring ON referrals(referring_doctor_id)`;
+  await sql`CREATE INDEX IF NOT EXISTS idx_referrals_receiving ON referrals(receiving_doctor_id)`;
+  await sql`CREATE INDEX IF NOT EXISTS idx_referrals_status ON referrals(receiving_doctor_id, status)`;
+
+  // ── In-app notifications ───────────────────────────────────────────────────
+  await sql`
+    CREATE TABLE IF NOT EXISTS notifications (
+      id BIGSERIAL PRIMARY KEY,
+      user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      type TEXT NOT NULL,              -- referral_received | referral_accepted | referral_declined | video_booking
+      title TEXT NOT NULL,
+      message TEXT NOT NULL,
+      entity_type TEXT DEFAULT '',     -- referral | appointment
+      entity_id TEXT DEFAULT '',
+      read BOOLEAN DEFAULT false,
+      created_at TIMESTAMPTZ DEFAULT NOW()
+    )
+  `;
+  await sql`CREATE INDEX IF NOT EXISTS idx_notifications_user ON notifications(user_id, read, created_at DESC)`;
+
   console.log('✅ DB migrations complete');
 }
 

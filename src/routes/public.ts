@@ -626,4 +626,35 @@ router.post('/partner-applications', async (req: Request, res: Response) => {
   }
 });
 
+// ─── GET /public/doctors/search?q= — lightweight doctor search for referrals ─
+router.get('/doctors/search', async (req: Request, res: Response) => {
+  const q = ((req.query.q as string) ?? '').trim();
+  if (q.length < 2) { res.json([]); return; }
+  const pattern = `%${q}%`;
+  try {
+    const rows = await sql`
+      SELECT id, name, specialty, degrees, profile_photo_url, city, state, profile_slug
+      FROM users
+      WHERE approval_status = 'approved'
+        AND public_profile_enabled = true
+        AND profile_slug IS NOT NULL
+        AND (LOWER(name) ILIKE ${pattern} OR LOWER(specialty) ILIKE ${pattern})
+      ORDER BY is_featured DESC NULLS LAST, name ASC
+      LIMIT 20
+    `;
+    res.json(rows.map(r => ({
+      id: r.id,
+      name: r.name,
+      specialty: r.specialty || '',
+      qualification: r.degrees || '',
+      profilePhotoUrl: r.profile_photo_url || '',
+      city: r.city || '',
+      state: r.state || '',
+      profileSlug: r.profile_slug,
+    })));
+  } catch (e: any) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 export default router;

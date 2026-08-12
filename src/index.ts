@@ -27,6 +27,8 @@ import orgRouter from './routes/org';
 import prescriptionsRouter from './routes/prescriptions';
 import labsRouter from './routes/labs';
 import dischargeRouter from './routes/discharge';
+import referralsRouter from './routes/referrals';
+import notificationsRouter from './routes/notifications';
 import { requireAuth, requireSuperAdmin, AuthPayload } from './middleware/auth';
 
 const app = express();
@@ -275,6 +277,8 @@ app.use('/org', orgRouter);
 app.use('/prescriptions', prescriptionsRouter);
 app.use('/labs', labsRouter);
 app.use('/discharge', dischargeRouter);
+app.use('/referrals', referralsRouter);
+app.use('/notifications', notificationsRouter);
 
 app.get('/health', (_req, res) => {
   res.json({ status: 'ok', time: new Date().toISOString() });
