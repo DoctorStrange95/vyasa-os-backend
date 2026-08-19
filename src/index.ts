@@ -293,6 +293,7 @@ app.patch('/auth/me/public-profile', requireAuth, async (req, res) => {
     gbp_url, years_experience, consultation_fee, profile_photo_url,
     education, services, awards, state, city,
     advance_payment, advance_amount, payment_qr_url, show_reg_number,
+    video_meet_link,
   } = req.body as Record<string, unknown>;
   try {
     const ap  = accepting_patients   != null ? Boolean(accepting_patients)   : null;
@@ -320,12 +321,14 @@ app.patch('/auth/me/public-profile', requireAuth, async (req, res) => {
         advance_payment        = COALESCE(${adv}::boolean,  advance_payment),
         advance_amount         = COALESCE(${adva}::integer, advance_amount),
         payment_qr_url         = COALESCE(${(payment_qr_url ?? null) as string | null}::text,    payment_qr_url),
-        show_reg_number        = COALESCE(${srn}::boolean,  show_reg_number)
+        show_reg_number        = COALESCE(${srn}::boolean,  show_reg_number),
+        video_meet_link        = COALESCE(${(video_meet_link ?? null) as string | null}::text,   video_meet_link)
       WHERE id = ${userId}
       RETURNING profile_slug, accepting_patients, public_profile_enabled, bio,
                 gbp_url, languages, years_experience, consultation_fee, profile_photo_url,
                 education, services, awards, state, city,
-                advance_payment, advance_amount, payment_qr_url, show_reg_number
+                advance_payment, advance_amount, payment_qr_url, show_reg_number,
+                video_meet_link
     `;
     res.json(rows[0] ?? {});
   } catch (e: any) {
@@ -341,7 +344,8 @@ app.get('/auth/me/public-profile', requireAuth, async (req, res) => {
       SELECT profile_slug, accepting_patients, public_profile_enabled, bio,
              gbp_url, languages, years_experience, consultation_fee, profile_photo_url,
              education, services, awards, state, city,
-             advance_payment, advance_amount, payment_qr_url, show_reg_number
+             advance_payment, advance_amount, payment_qr_url, show_reg_number,
+             video_meet_link
       FROM users WHERE id = ${userId}
     `;
     res.json(rows[0] ?? null);
@@ -439,9 +443,17 @@ app.patch('/booking-requests/:id', requireAuth, async (req, res) => {
         const aptDate = rawDate < today ? today : rawDate;
 
         // Await the INSERT so refreshAppointments() on the frontend sees it immediately
+        // If the booking is video type, pull the doctor's personal meet link
+        const consultType = (booking.consultation_type as string | null) ?? 'offline';
+        let meetLink = '';
+        if (consultType === 'video') {
+          const [docRow] = await sql`SELECT video_meet_link FROM users WHERE id = ${(booking.doctor_id as number | null) ?? userId}`;
+          meetLink = (docRow?.video_meet_link as string) ?? '';
+        }
+
         await sql`
           INSERT INTO appointments (id, clinic_id, patient_id, patient_name, patient_age, patient_gender, doctor_id,
-            date, time, reason, status)
+            date, time, reason, status, consultation_type, google_meet_link)
           VALUES (
             ${aptId}, ${aptClinicId}, NULL, ${booking.patient_name as string},
             ${booking.patient_age ? Number(booking.patient_age) : null},
@@ -450,7 +462,9 @@ app.patch('/booking-requests/:id', requireAuth, async (req, res) => {
             ${aptDate},
             ${(booking.preferred_time as string | null) ?? '09:00'},
             ${(booking.reason as string | null) ?? 'OPD Appointment'},
-            'scheduled'
+            'scheduled',
+            ${consultType},
+            ${meetLink}
           )
           ON CONFLICT DO NOTHING
         `.catch((e) => console.error('[booking→appointment]', e));

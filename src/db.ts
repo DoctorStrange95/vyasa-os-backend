@@ -810,6 +810,9 @@ export async function runMigrations() {
   await sql`ALTER TABLE appointments ADD COLUMN IF NOT EXISTS google_calendar_event_id TEXT DEFAULT ''`;
   await sql`ALTER TABLE appointments ADD COLUMN IF NOT EXISTS duration_mins INTEGER DEFAULT 30`;
 
+  // Doctor's personal Google Meet / video link — stored once, reused for every video booking
+  await sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS video_meet_link TEXT DEFAULT ''`;
+
   // ── Doctor-to-doctor patient referrals ────────────────────────────────────
   await sql`
     CREATE TABLE IF NOT EXISTS referrals (
